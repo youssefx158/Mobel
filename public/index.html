@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.2, user-scalable=yes, viewport-fit=cover"
+    />
+    <title>MD Streetwear</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260416-4" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container topbar-inner">
+        <div class="brand">
+          <div>
+            <div class="logo">MD</div>
+            <small>STREETWEAR</small>
+          </div>
+        </div>
+        <nav class="nav">
+          <a class="pill active" href="/">المنتجات</a>
+        </nav>
+        <div class="actions">
+          <button class="icon-btn" id="helpBtn" type="button" title="مساعدة / شكاوي">
+            ❓ مساعدة
+          </button>
+          <button class="icon-btn" id="trackBtn" type="button" title="تتبع الطلب">
+            🔍 تتبع الطلب
+          </button>
+          <button class="icon-btn" id="cartBtn" type="button" aria-label="السلة">
+            🛒
+            <span class="badge" id="cartBadge" style="display:none">0</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <section class="hero">
+        <h1>أحدث التصميمات</h1>
+        <p>ملابس حصرية بأسلوب عصري — جودة عالية وتصميم مميز</p>
+      </section>
+
+      <div id="empty" class="muted-box" style="display:none; text-align:center; padding:40px">
+        لا توجد منتجات متاحة حالياً.
+      </div>
+      <div class="grid" id="grid"></div>
+    </main>
+
+    <!-- Cart Drawer -->
+    <div class="drawer-backdrop" id="drawerBackdrop"></div>
+    <aside class="drawer" id="drawer" role="dialog" aria-label="السلة">
+      <div class="drawer-header">
+        <div style="font-weight:900; font-size:18px">🛒 السلة</div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <span class="mini" id="cartCount">0 عنصر</span>
+          <button class="xbtn" id="drawerClose" type="button">✕</button>
+        </div>
+      </div>
+      <div class="drawer-body">
+        <div id="cartEmpty" class="muted-box" style="text-align:center;padding:32px">السلة فارغة</div>
+        <div id="cartList"></div>
+      </div>
+      <div class="drawer-footer">
+        <div class="price-row" style="justify-content:space-between;margin-bottom:12px">
+          <span style="font-weight:700">الإجمالي</span>
+          <span class="price" id="cartTotal">٠ ج.م</span>
+        </div>
+        <a href="/checkout.html" class="btn" id="checkoutBtn" style="display:block;text-align:center;text-decoration:none">إتمام الشراء</a>
+        <button class="btn secondary" id="continueBtn" type="button" style="margin-top:8px">متابعة التسوق</button>
+      </div>
+    </aside>
+
+    <!-- Product Modal -->
+    <div class="backdrop" id="backdrop"></div>
+    <section class="modal" id="productModal" role="dialog" aria-modal="true">
+      <div class="modal-inner">
+        <div class="modal-close">
+          <div style="font-weight:900">تفاصيل المنتج</div>
+          <button class="xbtn" id="modalClose" type="button">✕</button>
+        </div>
+        <div id="modalBody"></div>
+      </div>
+    </section>
+
+    <!-- Track Modal -->
+    <div class="backdrop" id="trackBackdrop"></div>
+    <section class="modal" id="trackModal" role="dialog" aria-modal="true" style="width:min(500px,94vw)">
+      <div class="modal-inner">
+        <div class="modal-close">
+          <div style="font-weight:900">🔍 تتبع الطلب</div>
+          <button class="xbtn" id="trackClose" type="button">✕</button>
+        </div>
+        <div style="padding:8px 0">
+          <label style="display:block;margin-bottom:8px;font-weight:700">رقم الطلب</label>
+          <input id="trackId" placeholder="مثال: ORD-XXXXX" style="width:100%;margin-bottom:10px" />
+          <div class="err" id="trackErr" style="display:none;color:var(--danger);margin-bottom:8px"></div>
+          <button class="btn" id="trackGo" type="button">تتبع</button>
+          <div id="trackResult" style="margin-top:16px"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Help Modal -->
+    <div class="backdrop" id="helpBackdrop"></div>
+    <section class="modal" id="helpModal" role="dialog" aria-modal="true" style="width:min(520px,94vw)">
+      <div class="modal-inner">
+        <div class="modal-close">
+          <div style="font-weight:900">❓ مساعدة وتواصل</div>
+          <button class="xbtn" id="helpClose" type="button">✕</button>
+        </div>
+        <div id="helpBody">
+          <!-- Step 1: choose type -->
+          <div id="helpStep1">
+            <p style="color:var(--muted);margin-bottom:20px">اختر نوع تواصلك معنا:</p>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+              <button class="help-type-btn" id="chooseComplaint" type="button">
+                <span style="font-size:28px">😤</span>
+                <div style="font-weight:900;margin-top:8px">شكوى</div>
+                <div class="mini">مشكلة في طلبك؟</div>
+              </button>
+              <button class="help-type-btn" id="chooseSuggestion" type="button">
+                <span style="font-size:28px">💡</span>
+                <div style="font-weight:900;margin-top:8px">اقتراح</div>
+                <div class="mini">رأيك يهمنا</div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Step 2: complaint form -->
+          <div id="helpStepComplaint" style="display:none">
+            <button class="btn secondary" id="backFromComplaint" type="button" style="margin-bottom:16px;width:auto;padding:8px 16px">← رجوع</button>
+            <div class="field" id="fComplaintOrder">
+              <label for="complaintOrderId">رقم الطلب</label>
+              <input id="complaintOrderId" placeholder="ORD-XXXXX" />
+              <div class="err">يرجى إدخال رقم الطلب</div>
+            </div>
+            <div class="field" id="fComplaintMsg">
+              <label for="complaintMsg">موضوع الشكوى</label>
+              <textarea id="complaintMsg" rows="4" placeholder="اشرح مشكلتك بالتفصيل..." style="width:100%;resize:vertical;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:12px;padding:10px;color:var(--text);font-family:inherit"></textarea>
+              <div class="err">يرجى كتابة تفاصيل الشكوى</div>
+            </div>
+            <div class="err" id="complaintErr" style="display:none;margin-bottom:8px"></div>
+            <button class="btn" id="sendComplaint" type="button">إرسال الشكوى</button>
+          </div>
+
+          <!-- Step 2: suggestion form -->
+          <div id="helpStepSuggestion" style="display:none">
+            <button class="btn secondary" id="backFromSuggestion" type="button" style="margin-bottom:16px;width:auto;padding:8px 16px">← رجوع</button>
+            <div class="field" id="fSuggestionOrder">
+              <label for="suggestionOrderId">رقم الطلب (اختياري)</label>
+              <input id="suggestionOrderId" placeholder="ORD-XXXXX (غير إلزامي)" />
+            </div>
+            <div class="field" id="fSuggestionMsg">
+              <label for="suggestionMsg">اقتراحك</label>
+              <textarea id="suggestionMsg" rows="4" placeholder="شاركنا اقتراحك..." style="width:100%;resize:vertical;background:rgba(255,255,255,0.05);border:1px solid var(--border);border-radius:12px;padding:10px;color:var(--text);font-family:inherit"></textarea>
+              <div class="err">يرجى كتابة الاقتراح</div>
+            </div>
+            <div class="err" id="suggestionErr" style="display:none;margin-bottom:8px"></div>
+            <button class="btn" id="sendSuggestion" type="button">إرسال الاقتراح</button>
+          </div>
+
+          <!-- Success -->
+          <div id="helpSuccess" style="display:none;text-align:center;padding:24px 0">
+            <div style="font-size:48px">✅</div>
+            <div style="font-weight:900;font-size:18px;margin-top:12px">تم الإرسال بنجاح!</div>
+            <div class="mini" style="margin-top:8px">شكراً لتواصلك معنا، سنرد قريباً.</div>
+            <button class="btn" id="helpSuccessClose" type="button" style="margin-top:16px">إغلاق</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script type="module" src="/assets/index.js?v=20260416-4"></script>
+  </body>
+</html>

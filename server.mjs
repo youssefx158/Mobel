@@ -1,0 +1,810 @@
+import http from "node:http";
+import os from "node:os";
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
+
+import { config } from "./config.mjs";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const PUBLIC_DIR = fileUrlToFsPath(config.paths.publicDir);
+const storagePaths = await resolveRuntimeStoragePaths();
+const DATA_DIR = storagePaths.dataDir;
+const UPLOADS_DIR = storagePaths.uploadsDir;
+
+const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
+const ORDERS_FILE = path.join(DATA_DIR, "orders.json");
+const FEEDBACK_FILE = path.join(DATA_DIR, "feedback.json");
+
+// ── Signed Token (بيشتغل بدون قاعدة بيانات، وبيصمد بعد restart) ──
+const SESSION_KEY = Buffer.from(config.sessionSecret, "utf8");
+const SESSION_MAX_MS = config.sessionMaxAgeHours * 60 * 60 * 1000;
+
+function createSignedToken() {
+  const payload = JSON.stringify({ iat: Date.now() });
+  const b64 = Buffer.from(payload).toString("base64url");
+  const sig = crypto.createHmac("sha256", SESSION_KEY).update(b64).digest("base64url");
+  return `${b64}.${sig}`;
+}
+
+function verifySignedToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const dot = token.lastIndexOf(".");
+  if (dot === -1) return null;
+  const b64 = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expectedSig = crypto.createHmac("sha256", SESSION_KEY).update(b64).digest("base64url");
+  if (sig.length !== expectedSig.length) return null;
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expectedSig);
+  if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(b64, "base64url").toString("utf8"));
+    if (Date.now() - payload.iat > SESSION_MAX_MS) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+const lockouts = new Map(); // ip -> { attempts, lockUntilMs }
+
+await ensureDirs();
+await ensureDataFiles();
+
+const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url || "/", getRequestOrigin(req));
+    const method = (req.method || "GET").toUpperCase();
+
+    if (url.pathname.startsWith("/api/")) {
+      await handleApi(req, res, url, method);
+      return;
+    }
+
+    if (url.pathname === "/md-control-panel" || url.pathname === "/md-control-panel/") {
+      await serveFile(res, path.join(PUBLIC_DIR, "admin.html"));
+      return;
+    }
+
+    if (url.pathname.startsWith("/uploads/")) {
+      const rel = url.pathname.replace(/^\/uploads\//, "");
+      const abs = safeJoin(UPLOADS_DIR, rel);
+      if (!abs) return sendText(res, 400, "Bad request");
+      await serveFile(res, abs);
+      return;
+    }
+
+    const staticPath = url.pathname === "/" ? "/index.html" : url.pathname;
+    const abs = safeJoin(PUBLIC_DIR, staticPath);
+    if (!abs) return sendText(res, 400, "Bad request");
+    await serveFile(res, abs);
+  } catch (err) {
+    console.error("Request failed:", err);
+    sendText(res, 500, "Server error");
+  }
+});
+
+server.listen(config.port, "0.0.0.0", () => {
+  const urls = getServerUrls(config.port);
+  console.log(`MD Store: ${urls.store}`);
+  console.log(`Admin:    ${urls.admin}`);
+  if (urls.networkStore) {
+    console.log(`Network:  ${urls.networkStore}`);
+    console.log(`Admin LAN:${urls.networkAdmin}`);
+  }
+  console.log(`App root: ${config.paths.appRoot}`);
+  console.log(`Public:   ${PUBLIC_DIR}`);
+  console.log(`Data:     ${DATA_DIR}`);
+  console.log(`Uploads:  ${UPLOADS_DIR}`);
+});
+
+async function handleApi(req, res, url, method) {
+  try {
+    if (method === "OPTIONS") return sendJson(res, 204, {});
+
+    if (url.pathname === "/api/health") return sendJson(res, 200, { ok: true });
+
+  // Auth
+  if (url.pathname === "/api/admin/login" && method === "POST") {
+    const ip = getClientIp(req);
+    const lock = lockouts.get(ip);
+    if (lock && lock.lockUntilMs > Date.now()) {
+      return sendJson(res, 423, { ok: false, message: "الصفحة غير متاحة" });
+    }
+
+    const body = await readJsonBody(req, 64_000);
+    const password = String(body?.password || "");
+
+    if (password !== config.adminPassword) {
+      const next = lock || { attempts: 0, lockUntilMs: 0 };
+      next.attempts += 1;
+      if (next.attempts >= config.lockoutMaxAttempts) {
+        next.lockUntilMs = Date.now() + config.lockoutMinutes * 60_000;
+      }
+      lockouts.set(ip, next);
+      return sendJson(res, 401, { ok: false, message: "الصفحة غير متاحة" });
+    }
+
+    lockouts.delete(ip);
+    const token = createSignedToken();
+    setCookie(res, "mdsid", token, {
+      httpOnly: true,
+      sameSite: "Strict",
+      path: "/",
+      secure: true,
+      maxAge: config.sessionMaxAgeHours * 60 * 60,
+    });
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (url.pathname === "/api/admin/logout" && method === "POST") {
+    setCookie(res, "mdsid", "", {
+      path: "/",
+      maxAge: 0,
+      secure: true,
+    });
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // Products (public)
+  if (url.pathname === "/api/products" && method === "GET") {
+    const products = await readProducts();
+    const published = products.filter((p) => p.visibility === "published");
+    return sendJson(res, 200, { ok: true, products: published });
+  }
+
+  // Orders (public)
+  if (url.pathname === "/api/orders" && method === "POST") {
+    const body = await readJsonBody(req, 256_000);
+    const cart = Array.isArray(body?.cart) ? body.cart : [];
+    const customer = body?.customer || {};
+    const validation = validateOrderInput(cart, customer);
+    if (!validation.ok) return sendJson(res, 400, validation);
+
+    const { order, productsNotFound } = await createOrder(cart, customer);
+    if (productsNotFound.length) {
+      return sendJson(res, 400, {
+        ok: false,
+        message: "منتجات غير موجودة أو تغيرت",
+        productsNotFound,
+      });
+    }
+
+    const orders = await readOrders();
+    orders.unshift(order);
+    await writeJson(ORDERS_FILE, orders);
+    return sendJson(res, 201, { ok: true, orderId: order.id });
+  }
+
+  const orderMatch = url.pathname.match(/^\/api\/orders\/([A-Za-z0-9\-]+)$/);
+  if (orderMatch && method === "GET") {
+    const orderId = orderMatch[1];
+    const orders = await readOrders();
+    const order = orders.find((o) => o.id === orderId);
+    if (!order) return sendJson(res, 404, { ok: false, message: "رقم الطلب غير موجود" });
+    return sendJson(res, 200, {
+      ok: true,
+      order: {
+        id: order.id,
+        status: order.status,
+        history: order.history,
+        createdAt: order.createdAt,
+      },
+    });
+  }
+
+  // ===== FEEDBACK (public - submit) =====
+  if (url.pathname === "/api/feedback" && method === "POST") {
+    const body = await readJsonBody(req, 8_000);
+    const type = String(body?.type || "").trim(); // "complaint" | "suggestion"
+    const message = String(body?.message || "").trim();
+    const orderId = String(body?.orderId || "").trim();
+
+    if (!["complaint", "suggestion"].includes(type)) {
+      return sendJson(res, 400, { ok: false, message: "نوع غير صحيح" });
+    }
+    if (!message || message.length < 5) {
+      return sendJson(res, 400, { ok: false, message: "الرسالة قصيرة جداً" });
+    }
+    if (message.length > 2000) {
+      return sendJson(res, 400, { ok: false, message: "الرسالة طويلة جداً" });
+    }
+
+    const feedbackList = await readFeedback();
+    const id = `F-${crypto.randomBytes(6).toString("base64url")}`;
+    const entry = {
+      id,
+      type,
+      message,
+      orderId: orderId || null,
+      createdAt: new Date().toISOString(),
+      status: "new", // new | read | resolved
+    };
+    feedbackList.unshift(entry);
+    await writeJson(FEEDBACK_FILE, feedbackList);
+    return sendJson(res, 201, { ok: true, feedbackId: id });
+  }
+
+  // Admin protected routes
+  if (url.pathname.startsWith("/api/admin/")) {
+    const auth = requireAdminSession(req);
+    if (!auth.ok) return sendJson(res, auth.status, { ok: false, message: "غير مصرح" });
+  }
+
+  // Admin products
+  if (url.pathname === "/api/admin/products" && method === "GET") {
+    const products = await readProducts();
+    return sendJson(res, 200, { ok: true, products });
+  }
+  if (url.pathname === "/api/admin/products" && method === "POST") {
+    const body = await readJsonBody(req, 2_500_000);
+    const products = await readProducts();
+    const now = new Date().toISOString();
+    const productId = `P-${crypto.randomBytes(6).toString("base64url")}`;
+    const product = await normalizeProductInput(productId, body, now);
+    products.unshift(product);
+    await writeJson(PRODUCTS_FILE, products);
+    return sendJson(res, 201, { ok: true, product });
+  }
+  const prodMatch = url.pathname.match(/^\/api\/admin\/products\/(P-[A-Za-z0-9\-_]+)$/);
+  if (prodMatch && method === "PUT") {
+    const id = prodMatch[1];
+    const body = await readJsonBody(req, 2_500_000);
+    const products = await readProducts();
+    const idx = products.findIndex((p) => p.id === id);
+    if (idx < 0) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    const now = new Date().toISOString();
+    const updated = await normalizeProductInput(id, body, now, products[idx]);
+    products[idx] = updated;
+    await writeJson(PRODUCTS_FILE, products);
+    return sendJson(res, 200, { ok: true, product: updated });
+  }
+  if (prodMatch && method === "DELETE") {
+    const id = prodMatch[1];
+    const products = await readProducts();
+    const next = products.filter((p) => p.id !== id);
+    if (next.length === products.length) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    await writeJson(PRODUCTS_FILE, next);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // Admin orders
+  if (url.pathname === "/api/admin/orders" && method === "GET") {
+    const orders = await readOrders();
+    return sendJson(res, 200, { ok: true, orders });
+  }
+  const adminOrderMatch = url.pathname.match(/^\/api\/admin\/orders\/([A-Za-z0-9\-]+)$/);
+  if (adminOrderMatch && method === "GET") {
+    const id = adminOrderMatch[1];
+    const orders = await readOrders();
+    const order = orders.find((o) => o.id === id);
+    if (!order) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    return sendJson(res, 200, { ok: true, order });
+  }
+  const statusMatch = url.pathname.match(/^\/api\/admin\/orders\/([A-Za-z0-9\-]+)\/status$/);
+  if (statusMatch && method === "PUT") {
+    const id = statusMatch[1];
+    const body = await readJsonBody(req, 64_000);
+    const newStatus = String(body?.status || "").trim();
+    const note = String(body?.note || "").trim();
+    const VALID = ["pending", "confirmed", "processing", "shipped", "delivered", "cancelled"];
+    if (!VALID.includes(newStatus)) {
+      return sendJson(res, 400, { ok: false, message: "حالة غير صحيحة" });
+    }
+    const orders = await readOrders();
+    const idx = orders.findIndex((o) => o.id === id);
+    if (idx < 0) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    orders[idx].status = newStatus;
+    orders[idx].history = orders[idx].history || [];
+    orders[idx].history.unshift({
+      status: newStatus,
+      note: note || null,
+      at: new Date().toISOString(),
+    });
+    await writeJson(ORDERS_FILE, orders);
+    return sendJson(res, 200, { ok: true, order: orders[idx] });
+  }
+
+  // Admin stats
+  if (url.pathname === "/api/admin/stats" && method === "GET") {
+    const [products, orders, feedbackList] = await Promise.all([
+      readProducts(),
+      readOrders(),
+      readFeedback(),
+    ]);
+    const totalRevenue = orders
+      .filter((o) => o.status !== "cancelled")
+      .reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const stats = {
+      totalProducts: products.length,
+      publishedProducts: products.filter((p) => p.visibility === "published").length,
+      totalOrders: orders.length,
+      pendingOrders: orders.filter((o) => o.status === "pending").length,
+      deliveredOrders: orders.filter((o) => o.status === "delivered").length,
+      cancelledOrders: orders.filter((o) => o.status === "cancelled").length,
+      totalRevenue,
+      totalFeedback: feedbackList.length,
+      newFeedback: feedbackList.filter((f) => f.status === "new").length,
+      complaints: feedbackList.filter((f) => f.type === "complaint").length,
+      suggestions: feedbackList.filter((f) => f.type === "suggestion").length,
+    };
+    return sendJson(res, 200, { ok: true, stats });
+  }
+
+  // ===== Admin Feedback =====
+  if (url.pathname === "/api/admin/feedback" && method === "GET") {
+    const feedbackList = await readFeedback();
+    return sendJson(res, 200, { ok: true, feedback: feedbackList });
+  }
+
+  const feedbackStatusMatch = url.pathname.match(/^\/api\/admin\/feedback\/(F-[A-Za-z0-9\-_]+)\/status$/);
+  if (feedbackStatusMatch && method === "PUT") {
+    const id = feedbackStatusMatch[1];
+    const body = await readJsonBody(req, 1_000);
+    const newStatus = String(body?.status || "").trim();
+    const VALID = ["new", "read", "resolved"];
+    if (!VALID.includes(newStatus)) {
+      return sendJson(res, 400, { ok: false, message: "حالة غير صحيحة" });
+    }
+    const feedbackList = await readFeedback();
+    const idx = feedbackList.findIndex((f) => f.id === id);
+    if (idx < 0) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    feedbackList[idx].status = newStatus;
+    await writeJson(FEEDBACK_FILE, feedbackList);
+    return sendJson(res, 200, { ok: true, feedback: feedbackList[idx] });
+  }
+
+  const feedbackDeleteMatch = url.pathname.match(/^\/api\/admin\/feedback\/(F-[A-Za-z0-9\-_]+)$/);
+  if (feedbackDeleteMatch && method === "DELETE") {
+    const id = feedbackDeleteMatch[1];
+    const feedbackList = await readFeedback();
+    const next = feedbackList.filter((f) => f.id !== id);
+    if (next.length === feedbackList.length) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    await writeJson(FEEDBACK_FILE, next);
+    return sendJson(res, 200, { ok: true });
+  }
+
+    return sendJson(res, 404, { ok: false, message: "Not found" });
+  } catch (err) {
+    console.error(`API error on ${method} ${url.pathname}:`, err);
+    return sendJson(res, 500, {
+      ok: false,
+      message: getPublicErrorMessage(err),
+    });
+  }
+}
+
+// ==================== DATA HELPERS ====================
+
+async function readJson(file, fallback = []) {
+  try {
+    const raw = await fs.readFile(file, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+async function writeJson(file, data) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const tmp = file + "." + process.pid + ".tmp";
+  const json = JSON.stringify(data, null, 2);
+  try {
+    await fs.writeFile(tmp, json, "utf8");
+    await fs.rename(tmp, file);
+  } catch (err) {
+    // Some hosting filesystems reject atomic rename/replace; fall back to direct write.
+    try {
+      await fs.writeFile(file, json, "utf8");
+    } finally {
+      await fs.unlink(tmp).catch(() => {});
+    }
+    if (!await fileExists(file)) {
+      throw createStorageError(file, err);
+    }
+  }
+}
+
+async function readProducts() {
+  return readJson(PRODUCTS_FILE, []);
+}
+
+async function readOrders() {
+  return readJson(ORDERS_FILE, []);
+}
+
+async function readFeedback() {
+  return readJson(FEEDBACK_FILE, []);
+}
+
+async function createOrder(cart, customer) {
+  const products = await readProducts();
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const items = [];
+  const productsNotFound = [];
+
+  for (const line of cart) {
+    const p = byId.get(line.productId);
+    if (!p || p.visibility !== "published") {
+      productsNotFound.push(line.productId);
+      continue;
+    }
+    const qty = Math.max(1, Math.floor(Number(line.qty) || 1));
+    const unit = Number(p.salePrice) || Number(p.basePrice) || 0;
+    items.push({
+      productId: p.id,
+      name: p.name,
+      size: String(line.size || ""),
+      qty,
+      unit,
+      subtotal: unit * qty,
+    });
+  }
+
+  if (productsNotFound.length) return { order: null, productsNotFound };
+
+  const total = items.reduce((s, i) => s + i.subtotal, 0);
+  const id = `ORD-${crypto.randomBytes(5).toString("base64url").toUpperCase()}`;
+  const now = new Date().toISOString();
+  const order = {
+    id,
+    status: "pending",
+    customer,
+    items,
+    total,
+    createdAt: now,
+    history: [{ status: "pending", note: "تم إنشاء الطلب", at: now }],
+  };
+  return { order, productsNotFound: [] };
+}
+
+async function normalizeProductInput(id, body, now, existing = null) {
+  const name = String(body?.name || "").trim();
+  const description = String(body?.description || "").trim();
+  const visibility = ["published", "draft", "hidden"].includes(body?.visibility)
+    ? body.visibility
+    : (existing?.visibility ?? "draft");
+  const basePrice = Math.max(0, Number(body?.basePrice) || 0);
+  const salePrice = body?.salePrice != null ? Math.max(0, Number(body.salePrice) || 0) : null;
+
+  let cardImage = existing?.cardImage ?? null;
+  if (body?.cardImage && body.cardImage !== existing?.cardImage) {
+    cardImage = await saveDataUrl(body.cardImage, id + "-card");
+  }
+
+  const detailImages = [];
+  const rawDetails = Array.isArray(body?.detailImages) ? body.detailImages : (existing?.detailImages ?? []);
+  for (let i = 0; i < rawDetails.length; i++) {
+    const src = rawDetails[i];
+    if (!src) continue;
+    if (src.startsWith("data:")) {
+      detailImages.push(await saveDataUrl(src, `${id}-d${i}`));
+    } else {
+      detailImages.push(src);
+    }
+  }
+
+  const sizes = Array.isArray(body?.sizes)
+    ? body.sizes.map((s) => ({
+        label: String(s.label || "").trim(),
+        stock: Math.max(0, Number(s.stock) || 0),
+      }))
+    : (existing?.sizes ?? []);
+
+  return {
+    id,
+    name,
+    description,
+    visibility,
+    basePrice,
+    salePrice,
+    cardImage,
+    detailImages,
+    sizes,
+    createdAt: existing?.createdAt ?? now,
+    updatedAt: now,
+  };
+}
+
+async function saveDataUrl(dataUrl, name) {
+  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+  if (!m) return null;
+  const ext = m[1].split("/")[1]?.replace("jpeg", "jpg") || "jpg";
+  const buf = Buffer.from(m[2], "base64");
+  const filename = `${name}-${Date.now()}.${ext}`;
+  const dest = path.join(UPLOADS_DIR, filename);
+  await fs.writeFile(dest, buf);
+  return `/uploads/${filename}`;
+}
+
+// ==================== VALIDATION ====================
+
+function validateOrderInput(cart, customer) {
+  if (!Array.isArray(cart) || cart.length === 0) {
+    return { ok: false, message: "السلة فارغة" };
+  }
+  if (!customer.name || String(customer.name).trim().split(/\s+/).filter(Boolean).length < 2) {
+    return { ok: false, message: "يرجى إدخال الاسم الثلاثي" };
+  }
+  const phone = String(customer.phone || "").replace(/\D/g, "");
+  if (!/^01[0125]\d{8}$/.test(phone)) {
+    return { ok: false, message: "رقم الهاتف غير صحيح" };
+  }
+  if (!customer.governorate) {
+    return { ok: false, message: "يرجى اختيار المحافظة" };
+  }
+  return { ok: true };
+}
+
+// ==================== AUTH ====================
+
+function requireAdminSession(req) {
+  const token = getCookie(req, "mdsid");
+  const payload = verifySignedToken(token);
+  if (!payload) return { ok: false, status: 401 };
+  return { ok: true };
+}
+
+// ==================== HTTP UTILS ====================
+
+function sendJson(res, status, data) {
+  const body = JSON.stringify(data);
+  res.writeHead(status, {
+    "content-type": "application/json",
+    "content-length": Buffer.byteLength(body),
+    "x-content-type-options": "nosniff",
+  });
+  res.end(body);
+}
+
+function sendText(res, status, text) {
+  res.writeHead(status, { "content-type": "text/plain" });
+  res.end(text);
+}
+
+async function serveFile(res, abs) {
+  let stat;
+  try {
+    stat = await fs.stat(abs);
+  } catch {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("Not found");
+    return;
+  }
+  if (!stat.isFile()) {
+    res.writeHead(403, { "content-type": "text/plain" });
+    res.end("Forbidden");
+    return;
+  }
+  const ext = path.extname(abs).toLowerCase();
+  const mime = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "application/javascript",
+    ".css": "text/css",
+    ".json": "application/json",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".ttf": "font/ttf",
+  }[ext] || "application/octet-stream";
+
+  res.writeHead(200, {
+    "content-type": mime,
+    "content-length": stat.size,
+    "cache-control": ext === ".html" ? "no-cache" : "public, max-age=31536000",
+  });
+  const stream = (await import("node:fs")).createReadStream(abs);
+  stream.pipe(res);
+}
+
+async function readJsonBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    let buf = "";
+    let total = 0;
+    req.setEncoding("utf8");
+    req.on("data", (chunk) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        reject(new Error("Request too large"));
+        req.destroy();
+        return;
+      }
+      buf += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolve(JSON.parse(buf || "null"));
+      } catch {
+        resolve(null);
+      }
+    });
+    req.on("error", reject);
+  });
+}
+
+function getCookie(req, name) {
+  const header = req.headers["cookie"] || "";
+  for (const part of header.split(";")) {
+    const [k, ...vs] = part.trim().split("=");
+    if (k.trim() === name) return decodeURIComponent(vs.join("="));
+  }
+  return null;
+}
+
+function setCookie(res, name, value, opts = {}) {
+  let cookie = `${name}=${encodeURIComponent(value)}`;
+  if (opts.httpOnly) cookie += "; HttpOnly";
+  if (opts.secure) cookie += "; Secure";
+  if (opts.sameSite) cookie += `; SameSite=${opts.sameSite}`;
+  if (opts.path) cookie += `; Path=${opts.path}`;
+  if (opts.maxAge != null) cookie += `; Max-Age=${opts.maxAge}`;
+  res.setHeader("set-cookie", cookie);
+}
+
+function getRequestOrigin(req) {
+  const protocol = getRequestProtocol(req);
+  const host =
+    String(req.headers["x-forwarded-host"] || "").split(",")[0].trim() ||
+    req.headers.host ||
+    "localhost";
+  return `${protocol}://${host}`;
+}
+
+function getRequestProtocol(req) {
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedProto === "https" || forwardedProto === "http") return forwardedProto;
+
+  const cfVisitor = String(req.headers["cf-visitor"] || "");
+  if (cfVisitor.includes('"scheme":"https"')) return "https";
+  if (cfVisitor.includes('"scheme":"http"')) return "http";
+
+  return req.socket?.encrypted ? "https" : "http";
+}
+
+function isSecureRequest(req) {
+  return getRequestProtocol(req) === "https";
+}
+
+function getClientIp(req) {
+  return (
+    String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() ||
+    req.socket?.remoteAddress ||
+    "unknown"
+  );
+}
+
+function safeJoin(base, rel) {
+  const joined = path.join(base, rel);
+  if (!joined.startsWith(base)) return null;
+  return joined;
+}
+
+function fileUrlToFsPath(urlOrString) {
+  const s = String(urlOrString);
+  if (s.startsWith("file://")) return fileURLToPath(s);
+  return s;
+}
+
+async function ensureDirs() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(UPLOADS_DIR, { recursive: true });
+}
+
+async function ensureDataFiles() {
+  await ensureJsonFile(PRODUCTS_FILE, []);
+  await ensureJsonFile(ORDERS_FILE, []);
+  await ensureJsonFile(FEEDBACK_FILE, []);
+}
+
+async function ensureJsonFile(file, fallback) {
+  try {
+    await fs.access(file);
+  } catch {
+    await writeJson(file, fallback);
+  }
+}
+
+async function fileExists(file) {
+  try {
+    await fs.access(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getServerUrls(port) {
+  const networkHost = detectNetworkHost();
+  const domain = process.env.DOMAIN || "mdstore.website";
+  return {
+    store: `https://${domain}/`,
+    admin: `https://${domain}/md-control-panel`,
+    networkStore: networkHost ? `http://${networkHost}:${port}/` : null,
+    networkAdmin: networkHost ? `http://${networkHost}:${port}/md-control-panel` : null,
+  };
+}
+
+function detectNetworkHost() {
+  const nets = os.networkInterfaces();
+  for (const items of Object.values(nets)) {
+    for (const item of items || []) {
+      if (item.family === "IPv4" && !item.internal) return item.address;
+    }
+  }
+  return null;
+}
+
+async function resolveRuntimeStoragePaths() {
+  const dataCandidates = uniquePaths([
+    fileUrlToFsPath(config.paths.dataDir),
+    path.join(fileUrlToFsPath(config.paths.appRoot), "data"),
+    path.join(process.cwd(), "data"),
+    path.join(os.tmpdir(), "md-store-data", "data"),
+  ]);
+
+  const dataDir = await pickWritableDir(dataCandidates, "data");
+
+  const uploadCandidates = uniquePaths([
+    fileUrlToFsPath(config.paths.uploadsDir),
+    path.join(dataDir, "uploads"),
+    path.join(fileUrlToFsPath(config.paths.appRoot), "public", "uploads"),
+    path.join(process.cwd(), "public", "uploads"),
+    path.join(os.tmpdir(), "md-store-data", "uploads"),
+  ]);
+
+  const uploadsDir = await pickWritableDir(uploadCandidates, "uploads");
+
+  return { dataDir, uploadsDir };
+}
+
+async function pickWritableDir(candidates, label) {
+  let lastError = null;
+
+  for (const dir of candidates) {
+    try {
+      await fs.mkdir(dir, { recursive: true });
+      const testFile = path.join(dir, `.write-test-${process.pid}-${Date.now()}.tmp`);
+      await fs.writeFile(testFile, "ok", "utf8");
+      await fs.unlink(testFile);
+      return dir;
+    } catch (err) {
+      lastError = err;
+      console.warn(`Storage candidate rejected for ${label}: ${dir}`, err?.message || err);
+    }
+  }
+
+  throw new Error(
+    `No writable ${label} directory found. Last error: ${lastError?.message || "unknown error"}`
+  );
+}
+
+function uniquePaths(paths) {
+  return [...new Set(paths.filter(Boolean))];
+}
+
+function createStorageError(file, cause) {
+  const err = new Error(`Storage write failed for ${file}: ${cause?.message || "unknown error"}`);
+  err.code = "STORAGE_WRITE_FAILED";
+  err.file = file;
+  err.cause = cause;
+  return err;
+}
+
+function getPublicErrorMessage(err) {
+  if (err?.code === "STORAGE_WRITE_FAILED") {
+    return `تعذر حفظ البيانات داخل ${err.file}. تأكد أن مجلد data ومساره على الاستضافة قابلان للكتابة.`;
+  }
+  return "حدث خطأ داخلي في السيرفر أثناء تنفيذ الطلب";
+}
