@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>تأكيد الطلب | MD Streetwear</title>
+    <link rel="stylesheet" href="/assets/styles.css?v=20260420-1" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="container topbar-inner">
+        <a href="/" class="brand" style="text-decoration:none">
+          <div>
+            <div class="logo">MD</div>
+            <small>STREETWEAR</small>
+          </div>
+        </a>
+        <div style="font-weight:700;color:var(--muted)">تأكيد الطلب</div>
+      </div>
+    </header>
+
+    <main class="container">
+      <div class="checkout-grid">
+        <div class="checkout-card">
+          <section style="margin-bottom:24px">
+            <h2 style="margin:0 0 6px;font-size:20px">ملخص الطلب</h2>
+            <p class="mini">تأكد من منتجاتك قبل إتمام الشراء</p>
+          </section>
+
+          <div id="summaryEmpty" class="muted-box" style="text-align:center;padding:32px;display:none">
+            السلة فارغة - <a href="/" style="color:var(--teal2)">تسوق الآن</a>
+          </div>
+          <div id="summaryList" style="display:grid;gap:10px;margin-bottom:16px"></div>
+
+          <section class="discount-box" style="margin-bottom:18px">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+              <div>
+                <div style="font-weight:800">كود الخصم</div>
+                <div class="mini">اكتب الكود ثم اضغط تطبيق</div>
+              </div>
+              <span id="discountBadge" class="discount-badge" style="display:none"></span>
+            </div>
+            <div class="discount-actions">
+              <input id="discountCode" placeholder="مثال: SAVE10" autocomplete="off" />
+              <button id="applyDiscountBtn" class="btn" type="button" style="margin:0;width:auto;padding:10px 18px">تطبيق</button>
+              <button id="clearDiscountBtn" class="btn secondary" type="button" style="display:none;margin:0;width:auto;padding:10px 18px">إلغاء</button>
+            </div>
+            <div id="discountHint" class="discount-hint" data-tone="info">يمكنك استخدام الكود مرة واحدة فقط من نفس المتصفح.</div>
+          </section>
+
+          <div class="summary-totals">
+            <div class="summary-total-row">
+              <span>الإجمالي قبل الخصم</span>
+              <span id="summarySubtotal">٠ ج.م</span>
+            </div>
+            <div class="summary-total-row summary-total-row-discount" id="summaryDiscountRow" style="display:none">
+              <span>قيمة الخصم</span>
+              <span id="summaryDiscount">٠ ج.م</span>
+            </div>
+            <div class="summary-total-row summary-total-row-final">
+              <span style="font-weight:700">الإجمالي النهائي</span>
+              <span class="price" id="summaryTotal">٠ ج.م</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="checkout-card">
+          <h2 style="margin:0 0 18px;font-size:20px">بيانات الشحن</h2>
+          <form id="form" novalidate>
+            <div class="field" id="fName">
+              <label for="name">الاسم الثلاثي *</label>
+              <input id="name" placeholder="أدخل اسمك الثلاثي" autocomplete="name" />
+              <div class="err">أدخل اسمك الثلاثي</div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="field" id="fPhone">
+                <label for="phone">رقم الهاتف الأساسي *</label>
+                <input id="phone" type="tel" dir="ltr" placeholder="01XXXXXXXXX" autocomplete="tel" />
+                <div class="err">أدخل رقم هاتف مصري صحيح</div>
+              </div>
+              <div class="field" id="fPhone2">
+                <label for="phone2">رقم احتياطي (اختياري)</label>
+                <input id="phone2" type="tel" dir="ltr" placeholder="01XXXXXXXXX" autocomplete="tel" />
+                <div class="err">رقم غير صحيح</div>
+              </div>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div class="field" id="fGov">
+                <label for="gov">المحافظة *</label>
+                <select id="gov">
+                  <option value="">اختر المحافظة</option>
+                </select>
+                <div class="err">اختر المحافظة</div>
+              </div>
+              <div class="field" id="fArea">
+                <label for="area">المنطقة *</label>
+                <input id="area" placeholder="أدخل المنطقة" />
+                <div class="err">أدخل المنطقة</div>
+              </div>
+            </div>
+
+            <div class="field" id="fBuilding">
+              <label for="building">رقم/اسم المبنى *</label>
+              <input id="building" placeholder="أدخل رقم/اسم المبنى" />
+              <div class="err">أدخل رقم/اسم المبنى</div>
+            </div>
+
+            <div class="field" id="fAddress">
+              <label for="address">العنوان التفصيلي *</label>
+              <textarea id="address" rows="2" placeholder="اكتب الشارع والحي وأي تفاصيل تساعد على الوصول"></textarea>
+              <div class="err">أدخل العنوان التفصيلي</div>
+            </div>
+
+            <button id="submitBtn" class="btn" type="submit" style="font-size:16px;padding:14px">
+              ✅ تأكيد الطلب
+            </button>
+          </form>
+        </div>
+      </div>
+    </main>
+
+    <div id="confirm" style="display:none;position:fixed;inset:0;background:var(--bg);z-index:999;display:none;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px">
+      <canvas id="swirl" width="300" height="300" style="position:absolute;opacity:.4;pointer-events:none"></canvas>
+      <div id="okCard" style="opacity:0;position:relative;z-index:1">
+        <svg width="80" height="80" viewBox="0 0 80 80">
+          <circle cx="40" cy="40" r="36" fill="none" stroke="rgba(20,184,166,.25)" stroke-width="5" />
+          <path id="checkPath" d="M24 40 L36 52 L56 30"
+            fill="none" stroke="var(--teal2)" stroke-width="4"
+            stroke-linecap="round" stroke-linejoin="round"
+            stroke-dasharray="1" stroke-dashoffset="1" />
+        </svg>
+        <div style="font-size:clamp(22px,4vw,32px);font-weight:900;margin:16px 0 8px">تم تأكيد طلبك!</div>
+        <div class="mini" style="margin-bottom:20px;font-size:16px">احتفظ برقم طلبك لتتبع شحنتك</div>
+        <div style="display:flex;align-items:center;gap:10px;justify-content:center;flex-wrap:wrap">
+          <code id="okId" style="font-size:20px;font-weight:900;background:rgba(20,184,166,.1);border:1px solid rgba(20,184,166,.3);padding:10px 18px;border-radius:12px;color:var(--teal2)"></code>
+          <button id="copyBtn" class="btn" style="margin:0;width:auto;padding:10px 18px">نسخ رقم الطلب</button>
+        </div>
+        <a href="/" class="btn" style="display:inline-block;margin-top:16px;width:auto;padding:12px 28px;text-decoration:none">العودة للتسوق</a>
+      </div>
+    </div>
+
+    <script type="module" src="/assets/checkout.js?v=20260420-1"></script>
+  </body>
+</html>
