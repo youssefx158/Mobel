@@ -708,6 +708,7 @@ async function createOrderWithDiscount(cart, customer, options = {}) {
             combinedKey: pricing.discount.identityKeys.combinedKey,
             deviceKey: pricing.discount.identityKeys.deviceKey,
             browserKey: pricing.discount.identityKeys.browserKey,
+            ipKey: pricing.discount.identityKeys.ipKey,
           },
         ],
       };
@@ -831,10 +832,12 @@ async function resolveDiscountApplication({ code, subtotal, identity, req, consu
   const alreadyUsed = usageRecords.some((record) => {
     if (identity.combinedKey && record.combinedKey === identity.combinedKey) return true;
     if (record.deviceKey === identity.deviceKey) return true;
-    return identity.browserKey && record.browserKey === identity.browserKey;
+    if (identity.browserKey && record.browserKey === identity.browserKey) return true;
+    if (identity.ipKey && record.ipKey && record.ipKey === identity.ipKey) return true;
+    return false;
   });
   if (alreadyUsed) {
-    return { ok: false, message: "تم استخدام هذا الكود مسبقاً من هذا المتصفح" };
+    return { ok: false, message: "تم استخدام هذا الكود مسبقاً" };
   }
 
   const updatedDiscountCodes = consumeDiscount ? codes.map((item, itemIdx) => {
@@ -857,6 +860,7 @@ async function resolveDiscountApplication({ code, subtotal, identity, req, consu
       combinedKey: identity.combinedKey,
       deviceKey: identity.deviceKey,
       browserKey: identity.browserKey,
+      ipKey: identity.ipKey,
     },
     updatedDiscountCodes,
   };
@@ -927,13 +931,16 @@ function ensureVisitorIdentity(req, res, browserId = "") {
   const payload = existing || verifyDeviceToken(createAndSetVisitorCookie(req, res, cookieName));
   const normalizedBrowserId = normalizeBrowserId(browserId);
   const deviceId = payload?.did || "";
+  const clientIp = getClientIp(req);
 
   return {
     browserId: normalizedBrowserId,
     deviceId,
+    clientIp,
     browserKey: normalizedBrowserId ? sha256(`browser:${normalizedBrowserId}`) : null,
     deviceKey: deviceId ? sha256(`device:${deviceId}`) : null,
     combinedKey: deviceId && normalizedBrowserId ? sha256(`combo:${deviceId}:${normalizedBrowserId}`) : null,
+    ipKey: clientIp && clientIp !== "unknown" ? sha256(`ip:${clientIp}`) : null,
   };
 }
 
