@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Data files (local only - don't push to GitHub)
+data/
+*.tmp
+
+# Uploads (local only)
+uploads/*.jpg
+uploads/*.jpeg
+uploads/*.png
+uploads/*.gif
+uploads/*.webp
+# Keep uploads folder structure
+!uploads/.gitkeep
+
+# Environment
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
