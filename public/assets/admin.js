@@ -7,6 +7,7 @@ let state = {
   products: [],
   orders: [],
   feedback: [],
+  customDesigns: [],
   discountCodes: [],
   stats: null,
   activeNav: "products",
@@ -66,6 +67,7 @@ function renderLogin() {
 // ══════════════════════════════════════════
 function renderShell() {
   const newFeedback = state.feedback.filter(f => f.status === "new").length;
+  const newCustomDesigns = state.customDesigns.filter((entry) => entry.status === "new").length;
 
   root.innerHTML = `
     <div class="admin-wrap">
@@ -82,6 +84,10 @@ function renderShell() {
         <button id="navFeedback" class="btn sidebtn ${state.activeNav==='feedback'?'active':''}" type="button">
           💬 الشكاوي والاقتراحات
           ${newFeedback > 0 ? `<span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:900;margin-right:4px">${newFeedback}</span>` : ""}
+        </button>
+        <button id="navCustomDesigns" class="btn sidebtn ${state.activeNav==='customDesigns'?'active':''}" type="button">
+          🎨 التصميمات المخصصة
+          ${newCustomDesigns > 0 ? `<span style="background:var(--gold);color:#07111d;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:900;margin-right:4px">${newCustomDesigns}</span>` : ""}
         </button>
         <button id="navOrders"   class="btn sidebtn ${state.activeNav==='orders'?'active':''}"   type="button">🛒 إدارة الطلبات</button>
         <div style="flex:1"></div>
@@ -122,9 +128,12 @@ function renderShell() {
   qs("#navFeedback").addEventListener("click", async () => {
     state.activeNav = "feedback"; await loadFeedback(); renderShell(); renderFeedback();
   });
+  qs("#navCustomDesigns").addEventListener("click", async () => {
+    state.activeNav = "customDesigns"; await loadCustomDesigns(); renderShell(); renderCustomDesigns();
+  });
   qs("#logout").addEventListener("click", async () => {
     try { await api("/api/admin/logout", { method: "POST", body: "{}" }); } finally {
-      state = { view: "login", products: [], orders: [], feedback: [], discountCodes: [], stats: null, activeNav: "products" };
+      state = { view: "login", products: [], orders: [], feedback: [], customDesigns: [], discountCodes: [], stats: null, activeNav: "products" };
       renderLogin();
     }
   });
@@ -139,7 +148,7 @@ function renderShell() {
 //  LOAD DATA
 // ══════════════════════════════════════════
 async function loadAll() {
-  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback(), loadDiscountCodes()]);
+  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback(), loadDiscountCodes(), loadCustomDesigns()]);
 }
 async function loadProducts() {
   const d = await api("/api/admin/products"); state.products = d.products || [];
@@ -152,6 +161,9 @@ async function loadStats() {
 }
 async function loadFeedback() {
   const d = await api("/api/admin/feedback"); state.feedback = d.feedback || [];
+}
+async function loadCustomDesigns() {
+  const d = await api("/api/admin/custom-designs"); state.customDesigns = d.customDesigns || [];
 }
 async function loadDiscountCodes() {
   const d = await api("/api/admin/discount-codes"); state.discountCodes = d.codes || [];
@@ -1011,6 +1023,163 @@ async function fetchOrder(id) {
 // ══════════════════════════════════════════
 //  STATS VIEW
 // ══════════════════════════════════════════
+function renderCustomDesigns() {
+  const view = qs("#view");
+  const total = state.customDesigns.length;
+  const newCount = state.customDesigns.filter((entry) => entry.status === "new").length;
+  const contactedCount = state.customDesigns.filter((entry) => entry.status === "contacted").length;
+  const confirmedCount = state.customDesigns.filter((entry) => entry.status === "confirmed").length;
+
+  view.innerHTML = `
+    <div class="toolbar">
+      <div>
+        <div style="font-weight:900;font-size:18px">🎨 التصميمات المخصصة</div>
+        <div class="mini">${total} طلب تصميم • ${newCount} جديد</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <input id="customDesignSearch" placeholder="بحث بالموبايل أو التفاصيل..." style="width:240px" />
+        <button id="refreshCustomDesigns" class="btn" type="button" style="margin:0;width:auto;padding:10px 16px">🔄 تحديث</button>
+      </div>
+    </div>
+
+    <div class="filter-tabs" id="customDesignTabs">
+      <button class="filter-tab active" data-filter="all">الكل (${total})</button>
+      <button class="filter-tab" data-filter="new">🆕 جديد (${newCount})</button>
+      <button class="filter-tab" data-filter="contacted">📞 تم التواصل (${contactedCount})</button>
+      <button class="filter-tab" data-filter="confirmed">✅ تم التأكيد (${confirmedCount})</button>
+    </div>
+
+    <div id="customDesignGrid" class="admin-grid"></div>
+  `;
+
+  let activeFilter = "all";
+
+  qs("#customDesignTabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".filter-tab");
+    if (!tab) return;
+    activeFilter = tab.getAttribute("data-filter") || "all";
+    qsa(".filter-tab", qs("#customDesignTabs")).forEach((node) => node.classList.toggle("active", node === tab));
+    renderCustomDesignGrid(activeFilter, qs("#customDesignSearch").value.trim().toLowerCase());
+  });
+
+  qs("#customDesignSearch").addEventListener("input", (e) => {
+    renderCustomDesignGrid(activeFilter, e.target.value.trim().toLowerCase());
+  });
+
+  qs("#refreshCustomDesigns").addEventListener("click", async () => {
+    await loadCustomDesigns();
+    renderShell();
+    renderCustomDesigns();
+  });
+
+  renderCustomDesignGrid("all", "");
+}
+
+function renderCustomDesignGrid(filter, q) {
+  const grid = qs("#customDesignGrid");
+  grid.innerHTML = "";
+
+  const list = state.customDesigns.filter((entry) => {
+    if (filter !== "all" && entry.status !== filter) return false;
+    if (!q) return true;
+    const haystack = `${entry.phone || ""} ${entry.contactDetails || ""} ${entry.id || ""}`.toLowerCase();
+    return haystack.includes(q);
+  });
+
+  if (!list.length) {
+    grid.innerHTML = `<div class="muted-box" style="grid-column:1/-1;text-align:center;padding:40px">لا توجد طلبات تصميم مطابقة.</div>`;
+    return;
+  }
+
+  const statusLabel = {
+    new: "جديد",
+    contacted: "تم التواصل",
+    confirmed: "تم التأكيد",
+  };
+
+  list.forEach((entry, index) => {
+    const card = document.createElement("article");
+    card.className = "custom-design-card";
+    card.style.animationDelay = `${index * 40}ms`;
+    card.innerHTML = `
+      ${entry.generatedImage
+        ? `<img class="custom-design-image" src="${escapeAttr(entry.generatedImage)}" alt="${escapeAttr(entry.id)}" loading="lazy" />`
+        : `<div class="admin-card-no-image">لا توجد صورة</div>`}
+      <div class="custom-design-body">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+          <div>
+            <div class="admin-card-name">${escapeHtml(entry.id)}</div>
+            <div class="mini">${new Date(entry.createdAt).toLocaleString("ar-EG")}</div>
+          </div>
+          <span class="status-badge status-${escapeAttr(entry.status || "new")}">${escapeHtml(statusLabel[entry.status] || entry.status || "جديد")}</span>
+        </div>
+
+        <div class="custom-design-meta">
+          <div class="custom-design-line">
+            <div class="custom-design-label">رقم الموبايل</div>
+            <div class="custom-design-value">${escapeHtml(entry.phone || "—")}</div>
+          </div>
+          <div class="custom-design-line">
+            <div class="custom-design-label">تفاصيل التواصل</div>
+            <div class="custom-design-value">${escapeHtml(entry.contactDetails || "—")}</div>
+          </div>
+        </div>
+
+        ${entry.generatedText ? `<div class="custom-design-text">${escapeHtml(entry.generatedText)}</div>` : ""}
+
+        <div class="custom-design-actions">
+          ${entry.status !== "contacted" ? `<button class="btn secondary" data-act="contacted" data-id="${entry.id}" type="button">📞 تم التواصل</button>` : ""}
+          ${entry.status !== "confirmed" ? `<button class="btn success-btn" data-act="confirmed" data-id="${entry.id}" type="button">✅ تم التأكيد</button>` : ""}
+          ${entry.status !== "new" ? `<button class="btn" data-act="new" data-id="${entry.id}" type="button">↩️ رجوع إلى جديد</button>` : ""}
+          <button class="btn danger" data-act="delete" data-id="${entry.id}" type="button">🗑️ حذف</button>
+        </div>
+      </div>
+    `;
+
+    card.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const action = btn.getAttribute("data-act");
+      const id = btn.getAttribute("data-id");
+
+      if (action === "delete") {
+        if (!confirm("هل تريد حذف طلب التصميم هذا؟")) return;
+        try {
+          await api(`/api/admin/custom-designs/${id}`, { method: "DELETE" });
+          await loadCustomDesigns();
+          await loadStats();
+          renderShell();
+          renderCustomDesigns();
+          showToast("🗑️ تم حذف طلب التصميم");
+        } catch (error) {
+          alert(error.message);
+        }
+        return;
+      }
+
+      await updateCustomDesignStatus(id, action);
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+async function updateCustomDesignStatus(id, status) {
+  try {
+    await api(`/api/admin/custom-designs/${id}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status }),
+    });
+    await loadCustomDesigns();
+    await loadStats();
+    renderShell();
+    renderCustomDesigns();
+    showToast("✅ تم تحديث حالة التصميم");
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
 function renderStats() {
   const s = state.stats;
   const view = qs("#view");
@@ -1076,6 +1245,21 @@ function renderStats() {
         <div class="stat-value">${s.suggestions}</div>
         <div class="stat-label">اقتراحات</div>
       </div>
+      <div class="stat-card" style="animation-delay:600ms">
+        <div class="stat-icon">🎨</div>
+        <div class="stat-value">${s.totalCustomDesigns || 0}</div>
+        <div class="stat-label">طلبات تصميم مخصصة</div>
+      </div>
+      <div class="stat-card" style="animation-delay:660ms">
+        <div class="stat-icon">📞</div>
+        <div class="stat-value">${s.newCustomDesigns || 0}</div>
+        <div class="stat-label">تصميمات جديدة</div>
+      </div>
+      <div class="stat-card" style="animation-delay:720ms">
+        <div class="stat-icon">✅</div>
+        <div class="stat-value">${s.confirmedCustomDesigns || 0}</div>
+        <div class="stat-label">تصميمات مؤكدة</div>
+      </div>
     </div>
 
     ${s.newFeedback > 0 ? `
@@ -1088,6 +1272,17 @@ function renderStats() {
         <button class="btn" type="button" id="goToFeedback" style="margin:0;width:auto;padding:8px 16px">عرض الرسائل</button>
       </div>
     ` : ""}
+
+    ${(s.newCustomDesigns || 0) > 0 ? `
+      <div class="panel" style="margin-top:16px;border-color:rgba(20,184,166,.28);background:rgba(20,184,166,.06);display:flex;align-items:center;gap:12px;padding:16px">
+        <span style="font-size:24px">🎨</span>
+        <div>
+          <div style="font-weight:900">لديك ${s.newCustomDesigns} طلب تصميم جديد</div>
+          <div class="mini">طلبات التصميمات المخصصة بانتظار المتابعة والتواصل مع العميل.</div>
+        </div>
+        <button class="btn" type="button" id="goToCustomDesigns" style="margin:0;width:auto;padding:8px 16px">عرض التصميمات</button>
+      </div>
+    ` : ""}
   `;
 
   qs("#goToFeedback")?.addEventListener("click", async () => {
@@ -1095,6 +1290,13 @@ function renderStats() {
     await loadFeedback();
     renderShell();
     renderFeedback();
+  });
+
+  qs("#goToCustomDesigns")?.addEventListener("click", async () => {
+    state.activeNav = "customDesigns";
+    await loadCustomDesigns();
+    renderShell();
+    renderCustomDesigns();
   });
 }
 

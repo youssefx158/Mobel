@@ -19,6 +19,7 @@ const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
 const ORDERS_FILE = path.join(DATA_DIR, "orders.json");
 const FEEDBACK_FILE = path.join(DATA_DIR, "feedback.json");
 const DISCOUNT_CODES_FILE = path.join(DATA_DIR, "discount-codes.json");
+const CUSTOM_DESIGNS_FILE = path.join(DATA_DIR, "custom-designs.json");
 
 // ── Signed Token (بيشتغل بدون قاعدة بيانات، وبيصمد بعد restart) ──
 const SESSION_KEY = Buffer.from(config.sessionSecret, "utf8");
@@ -324,6 +325,57 @@ async function handleApi(req, res, url, method) {
     return sendJson(res, 201, { ok: true, feedbackId: id });
   }
 
+  // ===== CUSTOM DESIGNS (public) =====
+  if (url.pathname === "/api/custom-designs/generate" && method === "POST") {
+    const body = await readJsonBody(req, 18_000_000);
+    const images = Array.isArray(body?.images) ? body.images : [body?.image1, body?.image2];
+    const result = await generateCustomDesign(images);
+    return sendJson(res, 200, {
+      ok: true,
+      model: config.geminiModel,
+      generatedImage: result.generatedImage,
+      generatedText: result.generatedText,
+      referenceImages: result.referenceImages,
+    });
+  }
+
+  if (url.pathname === "/api/custom-designs" && method === "POST") {
+    const body = await readJsonBody(req, 256_000);
+    const phone = normalizePhoneNumber(body?.phone);
+    const contactDetails = String(body?.contactDetails || "").trim();
+    const generatedImage = String(body?.generatedImage || "").trim();
+    const generatedText = String(body?.generatedText || "").trim();
+    const referenceImages = Array.isArray(body?.referenceImages)
+      ? body.referenceImages.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+
+    if (!/^01[0125]\d{8}$/.test(phone)) {
+      return sendJson(res, 400, { ok: false, message: "يرجى إدخال رقم موبايل صحيح" });
+    }
+    if (!contactDetails || contactDetails.length < 6) {
+      return sendJson(res, 400, { ok: false, message: "اكتب تفاصيل كافية للتواصل وتأكيد الطلب" });
+    }
+    if (!generatedImage) {
+      return sendJson(res, 400, { ok: false, message: "قم بإنشاء التصميم أولاً" });
+    }
+
+    const customDesigns = await readCustomDesigns();
+    const id = `CD-${crypto.randomBytes(6).toString("base64url").toUpperCase()}`;
+    const entry = {
+      id,
+      phone,
+      contactDetails,
+      generatedImage,
+      generatedText: generatedText || null,
+      referenceImages,
+      status: "new",
+      createdAt: new Date().toISOString(),
+    };
+    customDesigns.unshift(entry);
+    await writeJson(CUSTOM_DESIGNS_FILE, customDesigns);
+    return sendJson(res, 201, { ok: true, designId: id });
+  }
+
   // Admin protected routes
   if (url.pathname.startsWith("/api/admin/")) {
     const auth = requireAdminSession(req);
@@ -497,10 +549,11 @@ async function handleApi(req, res, url, method) {
 
   // Admin stats
   if (url.pathname === "/api/admin/stats" && method === "GET") {
-    const [products, orders, feedbackList] = await Promise.all([
+    const [products, orders, feedbackList, customDesigns] = await Promise.all([
       readProducts(),
       readOrders(),
       readFeedback(),
+      readCustomDesigns(),
     ]);
     const totalRevenue = orders
       .filter((o) => o.status !== "cancelled")
@@ -517,6 +570,9 @@ async function handleApi(req, res, url, method) {
       newFeedback: feedbackList.filter((f) => f.status === "new").length,
       complaints: feedbackList.filter((f) => f.type === "complaint").length,
       suggestions: feedbackList.filter((f) => f.type === "suggestion").length,
+      totalCustomDesigns: customDesigns.length,
+      newCustomDesigns: customDesigns.filter((entry) => entry.status === "new").length,
+      confirmedCustomDesigns: customDesigns.filter((entry) => entry.status === "confirmed").length,
     };
     return sendJson(res, 200, { ok: true, stats });
   }
@@ -551,6 +607,45 @@ async function handleApi(req, res, url, method) {
     const next = feedbackList.filter((f) => f.id !== id);
     if (next.length === feedbackList.length) return sendJson(res, 404, { ok: false, message: "غير موجود" });
     await writeJson(FEEDBACK_FILE, next);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  // ===== Admin Custom Designs =====
+  if (url.pathname === "/api/admin/custom-designs" && method === "GET") {
+    const customDesigns = await readCustomDesigns();
+    return sendJson(res, 200, { ok: true, customDesigns });
+  }
+
+  const customDesignStatusMatch = url.pathname.match(/^\/api\/admin\/custom-designs\/(CD-[A-Za-z0-9\-_]+)\/status$/);
+  if (customDesignStatusMatch && method === "PUT") {
+    const id = customDesignStatusMatch[1];
+    const body = await readJsonBody(req, 8_000);
+    const status = String(body?.status || "").trim();
+    const validStatuses = ["new", "contacted", "confirmed"];
+    if (!validStatuses.includes(status)) {
+      return sendJson(res, 400, { ok: false, message: "حالة غير صحيحة" });
+    }
+
+    const customDesigns = await readCustomDesigns();
+    const idx = customDesigns.findIndex((entry) => entry.id === id);
+    if (idx < 0) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+
+    customDesigns[idx] = {
+      ...customDesigns[idx],
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeJson(CUSTOM_DESIGNS_FILE, customDesigns);
+    return sendJson(res, 200, { ok: true, customDesign: customDesigns[idx] });
+  }
+
+  const customDesignDeleteMatch = url.pathname.match(/^\/api\/admin\/custom-designs\/(CD-[A-Za-z0-9\-_]+)$/);
+  if (customDesignDeleteMatch && method === "DELETE") {
+    const id = customDesignDeleteMatch[1];
+    const customDesigns = await readCustomDesigns();
+    const next = customDesigns.filter((entry) => entry.id !== id);
+    if (next.length === customDesigns.length) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    await writeJson(CUSTOM_DESIGNS_FILE, next);
     return sendJson(res, 200, { ok: true });
   }
 
@@ -606,6 +701,10 @@ async function readOrders() {
 
 async function readFeedback() {
   return readJson(FEEDBACK_FILE, []);
+}
+
+async function readCustomDesigns() {
+  return readJson(CUSTOM_DESIGNS_FILE, []);
 }
 
 async function createOrder(cart, customer) {
@@ -1027,14 +1126,127 @@ async function normalizeProductInput(id, body, now, existing = null) {
 }
 
 async function saveDataUrl(dataUrl, name) {
-  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!m) return null;
-  const ext = m[1].split("/")[1]?.replace("jpeg", "jpg") || "jpg";
-  const buf = Buffer.from(m[2], "base64");
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed) return null;
+  const ext = getImageExtension(parsed.mimeType);
+  const buf = Buffer.from(parsed.base64, "base64");
   const filename = `${name}-${Date.now()}.${ext}`;
   const dest = path.join(UPLOADS_DIR, filename);
   await fs.writeFile(dest, buf);
   return `/uploads/${filename}`;
+}
+
+async function saveBase64Image(base64, mimeType, name) {
+  const ext = getImageExtension(mimeType);
+  const buf = Buffer.from(base64, "base64");
+  const filename = `${name}-${Date.now()}.${ext}`;
+  const dest = path.join(UPLOADS_DIR, filename);
+  await fs.writeFile(dest, buf);
+  return `/uploads/${filename}`;
+}
+
+function parseDataUrl(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    mimeType: match[1],
+    base64: match[2],
+  };
+}
+
+function getImageExtension(mimeType) {
+  const ext = String(mimeType || "").split("/")[1]?.toLowerCase() || "png";
+  return ext === "jpeg" ? "jpg" : ext;
+}
+
+function normalizePhoneNumber(value) {
+  return String(value || "").replace(/\D/g, "");
+}
+
+async function generateCustomDesign(images) {
+  if (!config.geminiApiKey) {
+    const err = new Error("GEMINI_API_KEY is not configured");
+    err.publicMessage = "مفتاح Gemini غير مضبوط على السيرفر";
+    err.statusCode = 503;
+    throw err;
+  }
+
+  if (!Array.isArray(images) || images.length !== 2) {
+    const err = new Error("Two images are required");
+    err.publicMessage = "ارفع صورتين قبل إنشاء التصميم";
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const requestParts = [{ text: config.geminiDesignPrompt }];
+  const referenceImages = [];
+
+  for (let i = 0; i < images.length; i++) {
+    const parsed = parseDataUrl(images[i]);
+    if (!parsed || !parsed.mimeType.startsWith("image/")) {
+      const err = new Error("Invalid image payload");
+      err.publicMessage = "يجب رفع صورتين صالحين";
+      err.statusCode = 400;
+      throw err;
+    }
+
+    requestParts.push({
+      inline_data: {
+        mime_type: parsed.mimeType,
+        data: parsed.base64,
+      },
+    });
+    referenceImages.push(await saveBase64Image(parsed.base64, parsed.mimeType, `custom-ref-${i + 1}`));
+  }
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.geminiModel)}:generateContent?key=${encodeURIComponent(config.geminiApiKey)}`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        contents: [{ parts: requestParts }],
+        generationConfig: {
+          imageConfig: {
+            aspectRatio: "1:1",
+          },
+        },
+      }),
+    }
+  );
+
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) {
+    const err = new Error(payload?.error?.message || "Gemini request failed");
+    err.publicMessage = "تعذر إنشاء التصميم الآن، حاول مرة أخرى بعد قليل";
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const contentParts = payload?.candidates?.flatMap((candidate) => candidate?.content?.parts || []) || [];
+  const imagePart = contentParts.find((part) => part?.inlineData || part?.inline_data);
+  const generatedText = contentParts
+    .filter((part) => typeof part?.text === "string" && part.text.trim())
+    .map((part) => part.text.trim())
+    .join("\n\n");
+
+  const inlineImage = imagePart?.inlineData || imagePart?.inline_data;
+  if (!inlineImage?.data || !inlineImage?.mimeType && !inlineImage?.mime_type) {
+    const err = new Error("Gemini did not return an image");
+    err.publicMessage = "لم يتم إنشاء صورة من Gemini، حاول بصورة أوضح";
+    err.statusCode = 502;
+    throw err;
+  }
+
+  const mimeType = inlineImage.mimeType || inlineImage.mime_type || "image/png";
+  const generatedImage = await saveBase64Image(inlineImage.data, mimeType, "custom-design-result");
+
+  return {
+    generatedImage,
+    generatedText,
+    referenceImages,
+  };
 }
 
 // ==================== VALIDATION ====================
@@ -1227,6 +1439,7 @@ async function ensureDataFiles() {
   await ensureJsonFile(ORDERS_FILE, []);
   await ensureJsonFile(FEEDBACK_FILE, []);
   await ensureJsonFile(DISCOUNT_CODES_FILE, []);
+  await ensureJsonFile(CUSTOM_DESIGNS_FILE, []);
 }
 
 async function ensureJsonFile(file, fallback) {
