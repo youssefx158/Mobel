@@ -7,6 +7,8 @@ let state = {
   products: [],
   orders: [],
   feedback: [],
+  customDesigns: [],
+  discountCodes: [],
   stats: null,
   activeNav: "products",
 };
@@ -65,6 +67,7 @@ function renderLogin() {
 // ══════════════════════════════════════════
 function renderShell() {
   const newFeedback = state.feedback.filter(f => f.status === "new").length;
+  const newCustomDesigns = state.customDesigns.filter((entry) => entry.status === "new").length;
 
   root.innerHTML = `
     <div class="admin-wrap">
@@ -76,10 +79,15 @@ function renderShell() {
           </div>
         </div>
         <button id="navProducts" class="btn sidebtn ${state.activeNav==='products'?'active':''}" type="button">📦 إدارة المنتجات</button>
+        <button id="navDiscounts" class="btn sidebtn ${state.activeNav==='discounts'?'active':''}" type="button">🏷️ إدارة الخصومات</button>
         <button id="navStats"    class="btn sidebtn ${state.activeNav==='stats'?'active':''}"    type="button">📊 الإحصائيات</button>
         <button id="navFeedback" class="btn sidebtn ${state.activeNav==='feedback'?'active':''}" type="button">
           💬 الشكاوي والاقتراحات
           ${newFeedback > 0 ? `<span style="background:var(--danger);color:#fff;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:900;margin-right:4px">${newFeedback}</span>` : ""}
+        </button>
+        <button id="navCustomDesigns" class="btn sidebtn ${state.activeNav==='customDesigns'?'active':''}" type="button">
+          🎨 التصميمات المخصصة
+          ${newCustomDesigns > 0 ? `<span style="background:var(--gold);color:#07111d;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:900;margin-right:4px">${newCustomDesigns}</span>` : ""}
         </button>
         <button id="navOrders"   class="btn sidebtn ${state.activeNav==='orders'?'active':''}"   type="button">🛒 إدارة الطلبات</button>
         <div style="flex:1"></div>
@@ -108,6 +116,9 @@ function renderShell() {
   qs("#navProducts").addEventListener("click", async () => {
     state.activeNav = "products"; await loadProducts(); renderShell(); renderProducts();
   });
+  qs("#navDiscounts").addEventListener("click", async () => {
+    state.activeNav = "discounts"; await loadDiscountCodes(); renderShell(); renderDiscountCodes();
+  });
   qs("#navOrders").addEventListener("click", async () => {
     state.activeNav = "orders"; await loadOrders(); renderShell(); renderOrders();
   });
@@ -117,9 +128,12 @@ function renderShell() {
   qs("#navFeedback").addEventListener("click", async () => {
     state.activeNav = "feedback"; await loadFeedback(); renderShell(); renderFeedback();
   });
+  qs("#navCustomDesigns").addEventListener("click", async () => {
+    state.activeNav = "customDesigns"; await loadCustomDesigns(); renderShell(); renderCustomDesigns();
+  });
   qs("#logout").addEventListener("click", async () => {
     try { await api("/api/admin/logout", { method: "POST", body: "{}" }); } finally {
-      state = { view: "login", products: [], orders: [], feedback: [], stats: null, activeNav: "products" };
+      state = { view: "login", products: [], orders: [], feedback: [], customDesigns: [], discountCodes: [], stats: null, activeNav: "products" };
       renderLogin();
     }
   });
@@ -134,7 +148,7 @@ function renderShell() {
 //  LOAD DATA
 // ══════════════════════════════════════════
 async function loadAll() {
-  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback()]);
+  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback(), loadDiscountCodes(), loadCustomDesigns()]);
 }
 async function loadProducts() {
   const d = await api("/api/admin/products"); state.products = d.products || [];
@@ -147,6 +161,12 @@ async function loadStats() {
 }
 async function loadFeedback() {
   const d = await api("/api/admin/feedback"); state.feedback = d.feedback || [];
+}
+async function loadCustomDesigns() {
+  const d = await api("/api/admin/custom-designs"); state.customDesigns = d.customDesigns || [];
+}
+async function loadDiscountCodes() {
+  const d = await api("/api/admin/discount-codes"); state.discountCodes = d.codes || [];
 }
 
 // ══════════════════════════════════════════
@@ -249,6 +269,260 @@ function renderProductGrid() {
   });
 }
 
+function cardPreviewMarkup(src, kind = "existing") {
+  if (!src) {
+    return `<div class="admin-image-empty">لا توجد صورة محددة</div>`;
+  }
+
+  return `
+    <div class="admin-image-preview admin-image-preview-card">
+      <img
+        src="${escapeAttr(src)}"
+        alt=""
+        data-card-preview="true"
+        data-kind="${escapeAttr(kind)}"
+        data-src="${escapeAttr(src)}"
+      />
+      <button type="button" class="admin-image-remove rm-card-img" aria-label="حذف الصورة">✕</button>
+    </div>
+  `;
+}
+
+function detailPreviewMarkup(src, kind = "existing", idx = "") {
+  const wrapperAttrs = kind === "existing"
+    ? `data-detail-idx="${escapeAttr(String(idx))}"`
+    : `data-new="true"`;
+  const imgAttrs = kind === "existing"
+    ? `data-existing="true" data-src="${escapeAttr(src)}"`
+    : `data-new="true" data-src="${escapeAttr(src)}"`;
+
+  return `
+    <div class="admin-image-preview admin-image-preview-detail" ${wrapperAttrs}>
+      <img src="${escapeAttr(src)}" alt="" ${imgAttrs} />
+      <button type="button" class="admin-image-remove rm-detail-img" aria-label="حذف الصورة">✕</button>
+    </div>
+  `;
+}
+
+// ══════════════════════════════════════════
+//  DISCOUNTS VIEW
+// ══════════════════════════════════════════
+function renderDiscountCodes() {
+  const view = qs("#view");
+  view.innerHTML = `
+    <div class="toolbar">
+      <div>
+        <div style="font-weight:900;font-size:18px">🏷️ إدارة الخصومات</div>
+        <div class="mini">${state.discountCodes.length} كود خصم</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <input id="discountSearch" placeholder="بحث بالكود..." style="width:220px" />
+        <button id="refreshDiscounts" class="btn" type="button" style="margin:0;width:auto;padding:10px 16px">🔄 تحديث</button>
+        <button id="createDiscount" class="btn" type="button" style="margin:0;width:auto;padding:10px 18px">＋ إنشاء كود</button>
+      </div>
+    </div>
+    <div id="discountGrid" class="admin-grid"></div>
+  `;
+
+  qs("#discountSearch").addEventListener("input", renderDiscountGrid);
+  qs("#refreshDiscounts").addEventListener("click", async () => {
+    await loadDiscountCodes();
+    renderDiscountGrid();
+  });
+  qs("#createDiscount").addEventListener("click", () => openDiscountEditor(null));
+  renderDiscountGrid();
+}
+
+function renderDiscountGrid() {
+  const q = qs("#discountSearch")?.value.trim().toLowerCase() || "";
+  const grid = qs("#discountGrid");
+  grid.innerHTML = "";
+
+  const list = state.discountCodes.filter((entry) => {
+    if (!q) return true;
+    return String(entry.code || "").toLowerCase().includes(q);
+  });
+
+  if (!list.length) {
+    grid.innerHTML = `<div class="muted-box" style="grid-column:1/-1;text-align:center;padding:40px">لا توجد أكواد خصم.</div>`;
+    return;
+  }
+
+  list.forEach((entry, i) => {
+    const exhausted = entry.exhausted || entry.remainingUses <= 0;
+    const active = entry.isActive !== false && !exhausted;
+    const el = document.createElement("article");
+    el.className = "admin-product-card";
+    el.style.animationDelay = `${i * 40}ms`;
+    el.innerHTML = `
+      <div class="admin-card-body" style="gap:12px">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div>
+            <div class="admin-card-name" dir="ltr">${escapeHtml(entry.code)}</div>
+            <div class="mini">${active ? "نشط" : exhausted ? "منتهي" : "متوقف"} • خصم ${entry.discountPercent}%</div>
+          </div>
+          <span class="status-badge ${active ? "status-published" : "status-hidden"}">${active ? "نشط" : exhausted ? "منتهي" : "متوقف"}</span>
+        </div>
+
+        <div class="stats-grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0">
+          <div class="stat-card" style="padding:14px;min-height:auto">
+            <div class="stat-value" style="font-size:20px">${entry.usedCount}</div>
+            <div class="stat-label">تم الاستخدام</div>
+          </div>
+          <div class="stat-card" style="padding:14px;min-height:auto">
+            <div class="stat-value" style="font-size:20px">${entry.remainingUses}</div>
+            <div class="stat-label">المتبقي</div>
+          </div>
+          <div class="stat-card" style="padding:14px;min-height:auto">
+            <div class="stat-value" style="font-size:20px">${entry.maxUses}</div>
+            <div class="stat-label">الحد الأقصى</div>
+          </div>
+        </div>
+
+        <div class="mini" style="line-height:1.8">
+          <div>تاريخ الإنشاء: ${entry.createdAt ? new Date(entry.createdAt).toLocaleString("ar-EG") : "—"}</div>
+          <div>آخر استخدام: ${entry.lastUsedAt ? new Date(entry.lastUsedAt).toLocaleString("ar-EG") : "لم يُستخدم بعد"}</div>
+        </div>
+
+        <div class="admin-card-actions">
+          <button class="btn" data-act="edit" type="button">✏️ تعديل</button>
+          <button class="btn secondary" data-act="reset" type="button">↺ تصفير</button>
+          <button class="btn danger" data-act="del" type="button">🗑️ حذف</button>
+        </div>
+      </div>
+    `;
+
+    el.addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      const act = btn.getAttribute("data-act");
+      if (act === "edit") openDiscountEditor(entry);
+      if (act === "reset") resetDiscountCode(entry);
+      if (act === "del") deleteDiscountCode(entry);
+    });
+
+    grid.appendChild(el);
+  });
+}
+
+function openDiscountEditor(entry) {
+  const backdrop = qs("#backdrop");
+  const modal = qs("#modal");
+  const title = qs("#modalTitle");
+  const body = qs("#modalBody");
+  const code = entry || {};
+
+  title.textContent = entry ? "تعديل كود الخصم" : "إنشاء كود خصم";
+
+  body.innerHTML = `
+    <div style="display:grid;gap:14px">
+      <div class="field">
+        <label>كود الخصم *</label>
+        <input id="discountCodeValue" value="${escapeAttr(code.code || "")}" placeholder="مثال: SAVE10" dir="ltr" />
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field">
+          <label>نسبة الخصم % *</label>
+          <input id="discountPercentValue" type="number" min="1" max="100" value="${code.discountPercent || ""}" />
+        </div>
+        <div class="field">
+          <label>عدد الاستخدامات *</label>
+          <input id="discountMaxUsesValue" type="number" min="1" value="${code.maxUses || ""}" />
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:10px;font-weight:700">
+        <input id="discountActiveValue" type="checkbox" ${entry ? (code.isActive !== false ? "checked" : "") : "checked"} style="width:auto" />
+        الكود نشط
+      </label>
+      <div class="mini" style="line-height:1.8">
+        <div>المستخدمون حالياً: ${code.usedCount || 0}</div>
+        <div>المتبقي حالياً: ${code.remainingUses ?? code.maxUses ?? 0}</div>
+      </div>
+      <div class="err" id="discountEditorErr" style="display:none;padding:8px 12px;background:rgba(239,68,68,.1);border-radius:10px"></div>
+      <button id="saveDiscountCode" class="btn" type="button">${entry ? "💾 حفظ التعديلات" : "✨ إنشاء الكود"}</button>
+    </div>
+  `;
+
+  qs("#saveDiscountCode", body).addEventListener("click", () => saveDiscountCode(entry?.id || null));
+
+  show(backdrop, true);
+  show(modal, true);
+}
+
+async function saveDiscountCode(existingId) {
+  const body = qs("#modalBody");
+  const errEl = qs("#discountEditorErr", body);
+  const saveBtn = qs("#saveDiscountCode", body);
+
+  errEl.style.display = "none";
+
+  const payload = {
+    code: qs("#discountCodeValue", body).value.trim().toUpperCase(),
+    discountPercent: Number(qs("#discountPercentValue", body).value) || 0,
+    maxUses: Number(qs("#discountMaxUsesValue", body).value) || 0,
+    isActive: qs("#discountActiveValue", body).checked,
+  };
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = "جاري الحفظ...";
+
+  try {
+    if (existingId) {
+      await api(`/api/admin/discount-codes/${existingId}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+      showToast("✅ تم تحديث كود الخصم");
+    } else {
+      await api("/api/admin/discount-codes", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      showToast("✨ تم إنشاء كود الخصم");
+    }
+
+    await loadDiscountCodes();
+    show(qs("#backdrop"), false);
+    show(qs("#modal"), false);
+    renderDiscountCodes();
+  } catch (e) {
+    errEl.textContent = e.message || "حصل خطأ أثناء حفظ الكود";
+    errEl.style.display = "block";
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = existingId ? "💾 حفظ التعديلات" : "✨ إنشاء الكود";
+  }
+}
+
+async function resetDiscountCode(entry) {
+  if (!confirm(`هل تريد تصفير استخدامات الكود ${entry.code}؟`)) return;
+  try {
+    await api(`/api/admin/discount-codes/${entry.id}/reset`, {
+      method: "POST",
+      body: "{}",
+    });
+    await loadDiscountCodes();
+    renderDiscountCodes();
+    showToast("↺ تم تصفير عدد الاستخدامات");
+  } catch (e) {
+    alert(e.message || "تعذر تصفير الكود");
+  }
+}
+
+async function deleteDiscountCode(entry) {
+  if (!confirm(`هل تريد حذف كود الخصم ${entry.code} نهائياً؟`)) return;
+  try {
+    await api(`/api/admin/discount-codes/${entry.id}`, {
+      method: "DELETE",
+    });
+    await loadDiscountCodes();
+    renderDiscountCodes();
+    showToast("🗑️ تم حذف كود الخصم");
+  } catch (e) {
+    alert(e.message || "تعذر حذف الكود");
+  }
+}
+
 // ══════════════════════════════════════════
 //  ORDERS VIEW
 // ══════════════════════════════════════════
@@ -346,8 +620,31 @@ function renderOrdersGrid() {
         <button class="btn" data-act="view" type="button" style="margin:0;width:auto;padding:8px 18px;font-size:13px">عرض التفاصيل</button>
       </div>
     `;
+    const orderActions = el.querySelector("[data-act='view']")?.parentElement;
+    if (orderActions) {
+      orderActions.style.display = "flex";
+      orderActions.style.gap = "8px";
+      orderActions.style.flexWrap = "wrap";
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "btn danger";
+      deleteBtn.type = "button";
+      deleteBtn.dataset.act = "delete";
+      deleteBtn.style.margin = "0";
+      deleteBtn.style.width = "auto";
+      deleteBtn.style.padding = "8px 18px";
+      deleteBtn.style.fontSize = "13px";
+      deleteBtn.textContent = "حذف الطلب";
+      orderActions.appendChild(deleteBtn);
+    }
+
     el.addEventListener("click", (e) => {
-      if (e.target.closest("[data-act='view']") || !e.target.closest("button")) {
+      const btn = e.target.closest("button");
+      if (btn?.dataset.act === "delete") {
+        openDeleteOrderModal(o);
+        return;
+      }
+      if (btn?.dataset.act === "view" || !btn) {
         openOrderModal(o);
       }
     });
@@ -457,6 +754,97 @@ function openOrderModal(o) {
 
   show(backdrop, true);
   show(modal, true);
+}
+
+function openDeleteOrderModal(o) {
+  const backdrop = qs("#backdrop");
+  const modal    = qs("#modal");
+  const title    = qs("#modalTitle");
+  const body     = qs("#modalBody");
+
+  title.textContent = `حذف الطلب: ${o.id}`;
+  body.innerHTML = `
+    <div class="confirm-delete-wrap">
+      <div class="confirm-delete-warning">
+        سيتم حذف هذا الطلب نهائيا من لوحة التحكم ومن صفحة تتبع الطلبات، ولا يمكن التراجع عن العملية.
+      </div>
+      <div class="panel confirm-delete-panel">
+        <div class="mini">رقم الطلب المطلوب حذفه</div>
+        <div class="confirm-delete-order-id">${escapeHtml(o.id)}</div>
+        <label for="deleteOrderConfirmInput" class="confirm-delete-label">
+          اكتب رقم الطلب بالكامل لتأكيد الحذف
+        </label>
+        <input
+          id="deleteOrderConfirmInput"
+          dir="ltr"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="${escapeAttr(o.id)}"
+        />
+        <div id="deleteOrderError" class="err" style="display:none"></div>
+        <div class="confirm-delete-actions">
+          <button id="confirmDeleteOrderBtn" class="btn danger" type="button" disabled>تأكيد الحذف</button>
+          <button id="cancelDeleteOrderBtn" class="btn secondary" type="button">إلغاء</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  const input = qs("#deleteOrderConfirmInput", body);
+  const confirmBtn = qs("#confirmDeleteOrderBtn", body);
+  const cancelBtn = qs("#cancelDeleteOrderBtn", body);
+  const errEl = qs("#deleteOrderError", body);
+
+  const syncDeleteState = () => {
+    confirmBtn.disabled = input.value.trim() !== o.id;
+    errEl.style.display = "none";
+  };
+
+  input.addEventListener("input", syncDeleteState);
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (!confirmBtn.disabled) confirmBtn.click();
+  });
+
+  cancelBtn.addEventListener("click", () => {
+    show(backdrop, false);
+    show(modal, false);
+  });
+
+  confirmBtn.addEventListener("click", async () => {
+    if (input.value.trim() !== o.id) {
+      syncDeleteState();
+      return;
+    }
+
+    confirmBtn.disabled = true;
+    cancelBtn.disabled = true;
+    input.disabled = true;
+    confirmBtn.textContent = "جاري الحذف...";
+
+    try {
+      await api(`/api/admin/orders/${o.id}`, { method: "DELETE" });
+      await loadOrders();
+      show(backdrop, false);
+      show(modal, false);
+      renderOrders();
+      showToast("🗑️ تم حذف الطلب نهائيا");
+    } catch (e) {
+      errEl.textContent = e.message || "حصل خطأ أثناء حذف الطلب";
+      errEl.style.display = "block";
+      confirmBtn.disabled = input.value.trim() !== o.id;
+      cancelBtn.disabled = false;
+      input.disabled = false;
+      confirmBtn.textContent = "تأكيد الحذف";
+      input.focus();
+    }
+  });
+
+  show(backdrop, true);
+  show(modal, true);
+  input.focus();
+  syncDeleteState();
 }
 
 // ══════════════════════════════════════════
@@ -635,6 +1023,242 @@ async function fetchOrder(id) {
 // ══════════════════════════════════════════
 //  STATS VIEW
 // ══════════════════════════════════════════
+function renderCustomDesigns() {
+  const view = qs("#view");
+  const total = state.customDesigns.length;
+  const newCount = state.customDesigns.filter((entry) => entry.status === "new").length;
+  const contactedCount = state.customDesigns.filter((entry) => entry.status === "contacted").length;
+  const confirmedCount = state.customDesigns.filter((entry) => entry.status === "confirmed").length;
+
+  view.innerHTML = `
+    <div class="toolbar">
+      <div>
+        <div style="font-weight:900;font-size:18px">🎨 التصميمات المخصصة</div>
+        <div class="mini">${total} طلب تصميم • ${newCount} جديد</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <input id="customDesignSearch" placeholder="بحث بالموبايل أو التفاصيل..." style="width:240px" />
+        <button id="refreshCustomDesigns" class="btn" type="button" style="margin:0;width:auto;padding:10px 16px">🔄 تحديث</button>
+      </div>
+    </div>
+
+    <div class="filter-tabs" id="customDesignTabs">
+      <button class="filter-tab active" data-filter="all">الكل (${total})</button>
+      <button class="filter-tab" data-filter="new">🆕 جديد (${newCount})</button>
+      <button class="filter-tab" data-filter="contacted">📞 تم التواصل (${contactedCount})</button>
+      <button class="filter-tab" data-filter="confirmed">✅ تم التأكيد (${confirmedCount})</button>
+    </div>
+
+    <div id="customDesignGrid" class="admin-grid"></div>
+  `;
+
+  let activeFilter = "all";
+
+  qs("#customDesignTabs").addEventListener("click", (e) => {
+    const tab = e.target.closest(".filter-tab");
+    if (!tab) return;
+    activeFilter = tab.getAttribute("data-filter") || "all";
+    qsa(".filter-tab", qs("#customDesignTabs")).forEach((node) => node.classList.toggle("active", node === tab));
+    renderCustomDesignGrid(activeFilter, qs("#customDesignSearch").value.trim().toLowerCase());
+  });
+
+  qs("#customDesignSearch").addEventListener("input", (e) => {
+    renderCustomDesignGrid(activeFilter, e.target.value.trim().toLowerCase());
+  });
+
+  qs("#refreshCustomDesigns").addEventListener("click", async () => {
+    await loadCustomDesigns();
+    renderShell();
+    renderCustomDesigns();
+  });
+
+  renderCustomDesignGrid("all", "");
+}
+
+function renderCustomDesignGrid(filter, q) {
+  const grid = qs("#customDesignGrid");
+  grid.innerHTML = "";
+
+  const list = state.customDesigns.filter((entry) => {
+    if (filter !== "all" && entry.status !== filter) return false;
+    if (!q) return true;
+    const haystack = `${entry.phone || ""} ${entry.contactDetails || ""} ${entry.id || ""}`.toLowerCase();
+    return haystack.includes(q);
+  });
+
+  if (!list.length) {
+    grid.innerHTML = `<div class="muted-box" style="grid-column:1/-1;text-align:center;padding:40px">لا توجد طلبات تصميم مطابقة.</div>`;
+    return;
+  }
+
+  const statusLabel = {
+    new: "جديد",
+    contacted: "تم التواصل",
+    confirmed: "تم التأكيد",
+  };
+
+  list.forEach((entry, index) => {
+    const card = document.createElement("article");
+    card.className = "custom-design-card";
+    card.style.animationDelay = `${index * 40}ms`;
+    const previewImage = entry.generatedImage || entry.referenceImages?.[0] || "";
+    const referenceStrip = Array.isArray(entry.referenceImages) && entry.referenceImages.length
+      ? `
+          <div class="custom-design-reference-strip">
+            ${entry.referenceImages.map((src) => `
+              <img class="custom-design-reference-thumb" src="${escapeAttr(src)}" alt="" loading="lazy" />
+            `).join("")}
+          </div>
+        `
+      : "";
+    card.innerHTML = `
+      ${previewImage
+        ? `<img class="custom-design-image" src="${escapeAttr(previewImage)}" alt="${escapeAttr(entry.id)}" loading="lazy" />`
+        : `<div class="admin-card-no-image">لا توجد صورة</div>`}
+      <div class="custom-design-body">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+          <div>
+            <div class="admin-card-name">${escapeHtml(entry.id)}</div>
+            <div class="mini">${new Date(entry.createdAt).toLocaleString("ar-EG")}</div>
+          </div>
+          <span class="status-badge status-${escapeAttr(entry.status || "new")}">${escapeHtml(statusLabel[entry.status] || entry.status || "جديد")}</span>
+        </div>
+
+        <div class="custom-design-meta">
+          <div class="custom-design-line">
+            <div class="custom-design-label">رقم الموبايل</div>
+            <div class="custom-design-value">${escapeHtml(entry.phone || "—")}</div>
+          </div>
+          <div class="custom-design-line">
+            <div class="custom-design-label">تفاصيل التواصل</div>
+            <div class="custom-design-value">${escapeHtml(entry.contactDetails || "—")}</div>
+          </div>
+        </div>
+
+        ${referenceStrip}
+        ${entry.generatedText ? `<div class="custom-design-text">${escapeHtml(entry.generatedText)}</div>` : ""}
+
+        <div class="custom-design-actions">
+          <button class="btn" data-act="details" data-id="${entry.id}" type="button">🔎 تفاصيل</button>
+          ${entry.status !== "contacted" ? `<button class="btn secondary" data-act="contacted" data-id="${entry.id}" type="button">📞 تم التواصل</button>` : ""}
+          ${entry.status !== "confirmed" ? `<button class="btn success-btn" data-act="confirmed" data-id="${entry.id}" type="button">✅ تم التأكيد</button>` : ""}
+          ${entry.status !== "new" ? `<button class="btn" data-act="new" data-id="${entry.id}" type="button">↩️ رجوع إلى جديد</button>` : ""}
+          <button class="btn danger" data-act="delete" data-id="${entry.id}" type="button">🗑️ حذف</button>
+        </div>
+      </div>
+    `;
+
+    card.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-act]");
+      if (!btn) return;
+      const action = btn.getAttribute("data-act");
+      const id = btn.getAttribute("data-id");
+      const currentEntry = state.customDesigns.find((item) => item.id === id);
+
+      if (action === "details") {
+        if (currentEntry) openCustomDesignModal(currentEntry);
+        return;
+      }
+
+      if (action === "delete") {
+        if (!confirm("هل تريد حذف طلب التصميم هذا؟")) return;
+        try {
+          await api(`/api/admin/custom-designs/${id}`, { method: "DELETE" });
+          await loadCustomDesigns();
+          await loadStats();
+          renderShell();
+          renderCustomDesigns();
+          showToast("🗑️ تم حذف طلب التصميم");
+        } catch (error) {
+          alert(error.message);
+        }
+        return;
+      }
+
+      await updateCustomDesignStatus(id, action);
+    });
+
+    grid.appendChild(card);
+  });
+}
+
+async function updateCustomDesignStatus(id, status) {
+  try {
+    await api(`/api/admin/custom-designs/${id}/status`, {
+      method: "PUT",
+      body: JSON.stringify({ status }),
+    });
+    await loadCustomDesigns();
+    await loadStats();
+    renderShell();
+    renderCustomDesigns();
+    showToast("✅ تم تحديث حالة التصميم");
+  } catch (error) {
+    alert(error.message);
+  }
+}
+
+function openCustomDesignModal(entry) {
+  const backdrop = qs("#backdrop");
+  const modal = qs("#modal");
+  const title = qs("#modalTitle");
+  const body = qs("#modalBody");
+
+  const statusLabel = {
+    new: "جديد",
+    contacted: "تم التواصل",
+    confirmed: "تم التأكيد",
+  };
+
+  title.textContent = `تفاصيل الطلب ${entry.id}`;
+  body.innerHTML = `
+    <div class="custom-design-modal">
+      <div class="custom-design-modal-grid">
+        ${(entry.referenceImages || []).map((src, index) => `
+          <div class="custom-design-modal-shot">
+            <div class="custom-design-modal-shot-label">الصورة ${index + 1}</div>
+            <img src="${escapeAttr(src)}" alt="مرجع ${index + 1}" />
+          </div>
+        `).join("")}
+      </div>
+
+      <div class="custom-design-modal-info">
+        <div class="custom-design-modal-line">
+          <span class="custom-design-modal-label">رقم الطلب</span>
+          <span class="custom-design-modal-value">${escapeHtml(entry.id)}</span>
+        </div>
+        <div class="custom-design-modal-line">
+          <span class="custom-design-modal-label">الحالة</span>
+          <span class="status-badge status-${escapeAttr(entry.status || "new")}">${escapeHtml(statusLabel[entry.status] || entry.status || "جديد")}</span>
+        </div>
+        <div class="custom-design-modal-line">
+          <span class="custom-design-modal-label">رقم الموبايل</span>
+          <span class="custom-design-modal-value">${escapeHtml(entry.phone || "—")}</span>
+        </div>
+        <div class="custom-design-modal-line">
+          <span class="custom-design-modal-label">تاريخ الإرسال</span>
+          <span class="custom-design-modal-value">${escapeHtml(new Date(entry.createdAt).toLocaleString("ar-EG"))}</span>
+        </div>
+      </div>
+
+      <div class="custom-design-modal-box">
+        <div class="custom-design-modal-label" style="margin-bottom:8px">تفاصيل التواصل</div>
+        <div class="custom-design-text">${escapeHtml(entry.contactDetails || "—")}</div>
+      </div>
+
+      ${(entry.generatedText || "").trim() ? `
+        <div class="custom-design-modal-box">
+          <div class="custom-design-modal-label" style="margin-bottom:8px">ملاحظات إضافية</div>
+          <div class="custom-design-text">${escapeHtml(entry.generatedText)}</div>
+        </div>
+      ` : ""}
+    </div>
+  `;
+
+  show(backdrop, true);
+  show(modal, true);
+}
+
 function renderStats() {
   const s = state.stats;
   const view = qs("#view");
@@ -700,6 +1324,21 @@ function renderStats() {
         <div class="stat-value">${s.suggestions}</div>
         <div class="stat-label">اقتراحات</div>
       </div>
+      <div class="stat-card" style="animation-delay:600ms">
+        <div class="stat-icon">🎨</div>
+        <div class="stat-value">${s.totalCustomDesigns || 0}</div>
+        <div class="stat-label">طلبات تصميم مخصصة</div>
+      </div>
+      <div class="stat-card" style="animation-delay:660ms">
+        <div class="stat-icon">📞</div>
+        <div class="stat-value">${s.newCustomDesigns || 0}</div>
+        <div class="stat-label">تصميمات جديدة</div>
+      </div>
+      <div class="stat-card" style="animation-delay:720ms">
+        <div class="stat-icon">✅</div>
+        <div class="stat-value">${s.confirmedCustomDesigns || 0}</div>
+        <div class="stat-label">تصميمات مؤكدة</div>
+      </div>
     </div>
 
     ${s.newFeedback > 0 ? `
@@ -712,6 +1351,17 @@ function renderStats() {
         <button class="btn" type="button" id="goToFeedback" style="margin:0;width:auto;padding:8px 16px">عرض الرسائل</button>
       </div>
     ` : ""}
+
+    ${(s.newCustomDesigns || 0) > 0 ? `
+      <div class="panel" style="margin-top:16px;border-color:rgba(20,184,166,.28);background:rgba(20,184,166,.06);display:flex;align-items:center;gap:12px;padding:16px">
+        <span style="font-size:24px">🎨</span>
+        <div>
+          <div style="font-weight:900">لديك ${s.newCustomDesigns} طلب تصميم جديد</div>
+          <div class="mini">طلبات التصميمات المخصصة بانتظار المتابعة والتواصل مع العميل.</div>
+        </div>
+        <button class="btn" type="button" id="goToCustomDesigns" style="margin:0;width:auto;padding:8px 16px">عرض التصميمات</button>
+      </div>
+    ` : ""}
   `;
 
   qs("#goToFeedback")?.addEventListener("click", async () => {
@@ -719,6 +1369,13 @@ function renderStats() {
     await loadFeedback();
     renderShell();
     renderFeedback();
+  });
+
+  qs("#goToCustomDesigns")?.addEventListener("click", async () => {
+    state.activeNav = "customDesigns";
+    await loadCustomDesigns();
+    renderShell();
+    renderCustomDesigns();
   });
 }
 
@@ -770,13 +1427,20 @@ function openProductEditor(product) {
       <div class="field">
         <label>صورة البطاقة الرئيسية</label>
         <input id="pCardImg" type="file" accept="image/*" style="padding:8px" />
-        ${p.cardImage ? `<img src="${escapeAttr(p.cardImage)}" style="margin-top:8px;height:80px;border-radius:10px;object-fit:cover" />` : ""}
+        <div
+          id="cardPreview"
+          class="admin-image-grid"
+          data-had-existing="${p.cardImage ? "true" : "false"}"
+          style="margin-top:8px"
+        >
+          ${cardPreviewMarkup(p.cardImage || "", p.cardImage ? "existing" : "none")}
+        </div>
       </div>
 
       <div class="field">
         <label>صور التفاصيل (يمكن اختيار أكثر من صورة)</label>
         <input id="pDetailImgs" type="file" accept="image/*" multiple style="padding:8px" />
-        <div id="detailPreviews" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <div id="detailPreviews" class="admin-image-grid" style="margin-top:8px">
           ${(p.detailImages||[]).map((src, idx) => `
             <div style="position:relative;display:inline-block" data-detail-idx="${idx}">
               <img src="${escapeAttr(src)}" style="height:60px;border-radius:8px;object-fit:cover;display:block" data-existing="true" data-src="${escapeAttr(src)}" />
@@ -803,6 +1467,13 @@ function openProductEditor(product) {
   `;
 
   let sizeIdx = sizes.length;
+  const cardInput = qs("#pCardImg", body);
+  const cardPreview = qs("#cardPreview", body);
+  const originalCardImage = p.cardImage || "";
+
+  function renderCardPreview(kind = originalCardImage ? "existing" : "none", src = originalCardImage || "") {
+    cardPreview.innerHTML = cardPreviewMarkup(src, kind);
+  }
 
   qs("#addSize", body).addEventListener("click", () => {
     const c = qs("#sizesContainer", body);
@@ -815,6 +1486,29 @@ function openProductEditor(product) {
     if (e.target.classList.contains("rm-size")) {
       e.target.closest(".size-row")?.remove();
     }
+  });
+
+  cardInput.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const url = await bytesToDataUrl(file);
+    renderCardPreview("new", url);
+  });
+
+  cardPreview.addEventListener("click", (e) => {
+    if (!e.target.closest(".rm-card-img")) return;
+
+    const activePreview = qs("[data-card-preview='true']", cardPreview);
+    const activeKind = activePreview?.dataset.kind || "none";
+    cardInput.value = "";
+
+    if (activeKind === "new" && originalCardImage) {
+      renderCardPreview("existing", originalCardImage);
+      return;
+    }
+
+    renderCardPreview("none", "");
   });
 
   qs("#pDetailImgs", body).addEventListener("change", async (e) => {
@@ -831,6 +1525,8 @@ function openProductEditor(product) {
       wrapper.querySelector(".rm-detail-img").addEventListener("click", () => wrapper.remove());
       prev.appendChild(wrapper);
     }
+
+    e.target.value = "";
   });
 
   // Remove existing detail images
@@ -884,28 +1580,32 @@ async function saveProduct(existingId) {
   }
 
   // Card image
+  const cardPreview = qs("#cardPreview", body);
+  const activeCardPreview = qs("[data-card-preview='true']", cardPreview);
+  const hadExistingCardImage = cardPreview.dataset.hadExisting === "true";
   let cardImage = undefined;
-  const cardFile = qs("#pCardImg", body).files?.[0];
-  if (cardFile) cardImage = await bytesToDataUrl(cardFile);
+  if (activeCardPreview?.dataset.kind === "new") {
+    cardImage = activeCardPreview.dataset.src || activeCardPreview.getAttribute("src");
+  } else if (!activeCardPreview && hadExistingCardImage) {
+    cardImage = null;
+  }
 
   // Detail images: collect remaining existing + newly added
   const detailPreviews = qs("#detailPreviews", body);
   const keptExisting = Array.from(detailPreviews.querySelectorAll("img[data-existing='true']"))
     .map(img => img.getAttribute("data-src")).filter(Boolean);
-  const detailFiles = Array.from(qs("#pDetailImgs", body).files || []);
-  // Only upload files whose wrapper is still present in DOM
   const newPreviews = Array.from(detailPreviews.querySelectorAll("[data-new='true'] img[data-new='true']"));
   const newImages = await Promise.all(
     newPreviews.map(img => {
       // Convert data URL back — we already have the data URL as img.src
-      return Promise.resolve(img.src);
+      return Promise.resolve(img.dataset.src || img.src);
     })
   );
   const detailImages = [...keptExisting, ...newImages];
 
   const payload = { name, description: desc, basePrice, salePrice, visibility, sizes };
   if (cardImage !== undefined) payload.cardImage = cardImage;
-  if (detailImages.length) payload.detailImages = detailImages;
+  payload.detailImages = detailImages;
 
   saveBtn.disabled = true;
   saveBtn.textContent = "جاري الحفظ...";

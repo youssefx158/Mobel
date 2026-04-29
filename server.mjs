@@ -18,6 +18,8 @@ const UPLOADS_DIR = storagePaths.uploadsDir;
 const PRODUCTS_FILE = path.join(DATA_DIR, "products.json");
 const ORDERS_FILE = path.join(DATA_DIR, "orders.json");
 const FEEDBACK_FILE = path.join(DATA_DIR, "feedback.json");
+const DISCOUNT_CODES_FILE = path.join(DATA_DIR, "discount-codes.json");
+const CUSTOM_DESIGNS_FILE = path.join(DATA_DIR, "custom-designs.json");
 const MAX_IMAGE_BYTES = 2_000_000;
 const ALLOWED_IMAGE_TYPES = new Map([
   ["image/jpeg", "jpg"],
@@ -29,6 +31,7 @@ const jsonWriteQueues = new Map();
 // ── Signed Token (بيشتغل بدون قاعدة بيانات، وبيصمد بعد restart) ──
 const SESSION_KEY = Buffer.from(config.sessionSecret, "utf8");
 const SESSION_MAX_MS = config.sessionMaxAgeHours * 60 * 60 * 1000;
+const DEVICE_TOKEN_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 function createSignedToken() {
   const payload = JSON.stringify({ iat: Date.now() });
@@ -51,6 +54,36 @@ function verifySignedToken(token) {
   try {
     const payload = JSON.parse(Buffer.from(b64, "base64url").toString("utf8"));
     if (Date.now() - payload.iat > SESSION_MAX_MS) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function createDeviceToken() {
+  const payload = JSON.stringify({
+    did: crypto.randomBytes(16).toString("base64url"),
+    iat: Date.now(),
+  });
+  const b64 = Buffer.from(payload).toString("base64url");
+  const sig = crypto.createHmac("sha256", SESSION_KEY).update(`device:${b64}`).digest("base64url");
+  return `${b64}.${sig}`;
+}
+
+function verifyDeviceToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const dot = token.lastIndexOf(".");
+  if (dot === -1) return null;
+  const b64 = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expectedSig = crypto.createHmac("sha256", SESSION_KEY).update(`device:${b64}`).digest("base64url");
+  if (sig.length !== expectedSig.length) return null;
+  const sigBuf = Buffer.from(sig);
+  const expBuf = Buffer.from(expectedSig);
+  if (!crypto.timingSafeEqual(sigBuf, expBuf)) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(b64, "base64url").toString("utf8"));
+    if (!payload?.did || typeof payload.did !== "string") return null;
     return payload;
   } catch {
     return null;
@@ -167,39 +200,91 @@ async function handleApi(req, res, url, method) {
     return sendJson(res, 200, { ok: true, products: published });
   }
 
+  if (url.pathname === "/api/discount-codes/preview" && method === "POST") {
+    const body = await readJsonBody(req, 256_000);
+    const cart = Array.isArray(body?.cart) ? body.cart : [];
+    const code = normalizeDiscountCode(body?.code);
+    const browserId = normalizeBrowserId(body?.browserId);
+
+    if (!Array.isArray(cart) || cart.length === 0) {
+      return sendJson(res, 400, { ok: false, message: "السلة فارغة" });
+    }
+    if (!code) {
+      return sendJson(res, 400, { ok: false, message: "اكتب كود الخصم أولاً" });
+    }
+
+    const identity = ensureVisitorIdentity(req, res, browserId);
+    const pricing = await calculateOrderPricing(cart, {
+      discountCode: code,
+      identity,
+      req,
+      consumeDiscount: false,
+    });
+
+    if (pricing.productsNotFound.length) {
+      return sendJson(res, 400, {
+        ok: false,
+        message: "بعض المنتجات غير متاحة الآن",
+        productsNotFound: pricing.productsNotFound,
+      });
+    }
+    if (!pricing.discount.ok) {
+      return sendJson(res, 400, { ok: false, message: pricing.discount.message });
+    }
+
+    return sendJson(res, 200, {
+      ok: true,
+      preview: {
+        code: pricing.discount.code,
+        discountPercent: pricing.discount.discountPercent,
+        subtotal: pricing.subtotal,
+        discountAmount: pricing.discountAmount,
+        total: pricing.total,
+        remainingUses: pricing.discount.remainingUses,
+        maxUses: pricing.discount.maxUses,
+      },
+    });
+  }
+
   // Orders (public)
   if (url.pathname === "/api/orders" && method === "POST") {
     const body = await readJsonBody(req, 256_000);
     const cart = Array.isArray(body?.cart) ? body.cart : [];
     const customer = body?.customer || {};
+    const discountCode = normalizeDiscountCode(body?.discountCode);
+    const browserId = normalizeBrowserId(body?.browserId);
     const validation = validateOrderInput(cart, customer);
     if (!validation.ok) return sendJson(res, 400, validation);
 
-    let orderResult;
-    await updateJson(PRODUCTS_FILE, [], (products) => {
-      orderResult = createOrder(cart, customer, products);
-      return orderResult.ok ? orderResult.products : products;
+    const identity = ensureVisitorIdentity(req, res, browserId);
+    const { order, productsNotFound, updatedDiscountCodes } = await createOrderWithDiscount(cart, customer, {
+      discountCode,
+      identity,
+      req,
     });
-    if (orderResult.productsNotFound.length) {
+    if (productsNotFound.length) {
       return sendJson(res, 400, {
         ok: false,
         message: "منتجات غير موجودة أو تغيرت",
-        productsNotFound: orderResult.productsNotFound,
-      });
-    }
-    if (orderResult.invalidItems.length) {
-      return sendJson(res, 400, {
-        ok: false,
-        message: "Size or quantity is not available",
-        invalidItems: orderResult.invalidItems,
+        productsNotFound,
       });
     }
 
-    await updateJson(ORDERS_FILE, [], (orders) => {
-      orders.unshift(orderResult.order);
-      return orders;
-    });
-    return sendJson(res, 201, { ok: true, orderId: orderResult.order.id });
+    const orders = await readOrders();
+    orders.unshift(order);
+    if (updatedDiscountCodes) {
+      await writeJson(DISCOUNT_CODES_FILE, updatedDiscountCodes);
+    }
+
+    try {
+      await writeJson(ORDERS_FILE, orders);
+    } catch (err) {
+      if (updatedDiscountCodes && order?.discount?.code) {
+        await rollbackDiscountUsage(order.discount.code, order.id);
+      }
+      throw err;
+    }
+    return sendJson(res, 201, { ok: true, orderId: order.id });
   }
 
   const orderMatch = url.pathname.match(/^\/api\/orders\/([A-Za-z0-9\-]+)$/);
@@ -251,10 +336,140 @@ async function handleApi(req, res, url, method) {
     return sendJson(res, 201, { ok: true, feedbackId: id });
   }
 
+  if (url.pathname === "/api/custom-designs" && method === "POST") {
+    const body = await readJsonBody(req, 18_000_000);
+    const phone = normalizePhoneNumber(body?.phone);
+    const contactDetails = String(body?.contactDetails || "").trim();
+    const referenceImages = Array.isArray(body?.images)
+      ? body.images.map((item) => String(item || "").trim()).filter(Boolean)
+      : Array.isArray(body?.referenceImages)
+      ? body.referenceImages.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+
+    if (!/^01[0125]\d{8}$/.test(phone)) {
+      return sendJson(res, 400, { ok: false, message: "يرجى إدخال رقم موبايل صحيح" });
+    }
+    if (!contactDetails || contactDetails.length < 6) {
+      return sendJson(res, 400, { ok: false, message: "اكتب تفاصيل كافية للتواصل وتأكيد الطلب" });
+    }
+    if (referenceImages.length !== 2) {
+      return sendJson(res, 400, { ok: false, message: "ارفع الصورتين أولاً" });
+    }
+
+    const customDesigns = await readCustomDesigns();
+    const id = `CD-${crypto.randomBytes(6).toString("base64url").toUpperCase()}`;
+    const savedReferenceImages = [];
+    for (let i = 0; i < referenceImages.length; i++) {
+      const src = referenceImages[i];
+      if (!src.startsWith("data:")) {
+        return sendJson(res, 400, { ok: false, message: "صيغة الصور غير صحيحة" });
+      }
+      const saved = await saveDataUrl(src, `${id}-ref-${i + 1}`);
+      if (saved) savedReferenceImages.push(saved);
+    }
+
+    const entry = {
+      id,
+      phone,
+      contactDetails,
+      generatedImage: null,
+      generatedText: null,
+      referenceImages: savedReferenceImages,
+      status: "new",
+      createdAt: new Date().toISOString(),
+    };
+    customDesigns.unshift(entry);
+    await writeJson(CUSTOM_DESIGNS_FILE, customDesigns);
+    return sendJson(res, 201, { ok: true, designId: id });
+  }
+
   // Admin protected routes
   if (url.pathname.startsWith("/api/admin/")) {
     const auth = requireAdminSession(req);
     if (!auth.ok) return sendJson(res, auth.status, { ok: false, message: "غير مصرح" });
+  }
+
+  if (url.pathname === "/api/admin/discount-codes" && method === "GET") {
+    const codes = await readDiscountCodes();
+    return sendJson(res, 200, {
+      ok: true,
+      codes: codes.map(formatDiscountCodeForAdmin),
+    });
+  }
+
+  if (url.pathname === "/api/admin/discount-codes" && method === "POST") {
+    const body = await readJsonBody(req, 64_000);
+    const now = new Date().toISOString();
+    const codes = await readDiscountCodes();
+    const payload = normalizeDiscountCodeInput(body, codes);
+    if (!payload.ok) return sendJson(res, 400, payload);
+
+    const entry = {
+      id: `DC-${crypto.randomBytes(6).toString("base64url")}`,
+      code: payload.code,
+      discountPercent: payload.discountPercent,
+      maxUses: payload.maxUses,
+      usageRecords: [],
+      createdAt: now,
+      updatedAt: now,
+      lastUsedAt: null,
+      isActive: true,
+    };
+    codes.unshift(entry);
+    await writeJson(DISCOUNT_CODES_FILE, codes);
+    return sendJson(res, 201, { ok: true, code: formatDiscountCodeForAdmin(entry) });
+  }
+
+  const adminDiscountMatch = url.pathname.match(/^\/api\/admin\/discount-codes\/(DC-[A-Za-z0-9\-_]+)$/);
+  if (adminDiscountMatch && method === "PUT") {
+    const body = await readJsonBody(req, 64_000);
+    const id = adminDiscountMatch[1];
+    const codes = await readDiscountCodes();
+    const idx = codes.findIndex((entry) => entry.id === id);
+    if (idx < 0) return sendJson(res, 404, { ok: false, message: "كود الخصم غير موجود" });
+
+    const payload = normalizeDiscountCodeInput(body, codes, id);
+    if (!payload.ok) return sendJson(res, 400, payload);
+
+    codes[idx] = {
+      ...codes[idx],
+      code: payload.code,
+      discountPercent: payload.discountPercent,
+      maxUses: payload.maxUses,
+      isActive: body?.isActive == null ? codes[idx].isActive !== false : Boolean(body.isActive),
+      updatedAt: new Date().toISOString(),
+    };
+    await writeJson(DISCOUNT_CODES_FILE, codes);
+    return sendJson(res, 200, { ok: true, code: formatDiscountCodeForAdmin(codes[idx]) });
+  }
+
+  if (adminDiscountMatch && method === "DELETE") {
+    const id = adminDiscountMatch[1];
+    const codes = await readDiscountCodes();
+    const next = codes.filter((entry) => entry.id !== id);
+    if (next.length === codes.length) {
+      return sendJson(res, 404, { ok: false, message: "كود الخصم غير موجود" });
+    }
+    await writeJson(DISCOUNT_CODES_FILE, next);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  const adminDiscountResetMatch = url.pathname.match(/^\/api\/admin\/discount-codes\/(DC-[A-Za-z0-9\-_]+)\/reset$/);
+  if (adminDiscountResetMatch && method === "POST") {
+    const id = adminDiscountResetMatch[1];
+    const codes = await readDiscountCodes();
+    const idx = codes.findIndex((entry) => entry.id === id);
+    if (idx < 0) return sendJson(res, 404, { ok: false, message: "كود الخصم غير موجود" });
+
+    codes[idx] = {
+      ...codes[idx],
+      usageRecords: [],
+      lastUsedAt: null,
+      isActive: true,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeJson(DISCOUNT_CODES_FILE, codes);
+    return sendJson(res, 200, { ok: true, code: formatDiscountCodeForAdmin(codes[idx]) });
   }
 
   // Admin products
@@ -307,6 +522,14 @@ async function handleApi(req, res, url, method) {
     if (!order) return sendJson(res, 404, { ok: false, message: "غير موجود" });
     return sendJson(res, 200, { ok: true, order });
   }
+  if (adminOrderMatch && method === "DELETE") {
+    const id = adminOrderMatch[1];
+    const orders = await readOrders();
+    const next = orders.filter((o) => o.id !== id);
+    if (next.length === orders.length) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    await writeJson(ORDERS_FILE, next);
+    return sendJson(res, 200, { ok: true });
+  }
   const statusMatch = url.pathname.match(/^\/api\/admin\/orders\/([A-Za-z0-9\-]+)\/status$/);
   if (statusMatch && method === "PUT") {
     const id = statusMatch[1];
@@ -333,10 +556,11 @@ async function handleApi(req, res, url, method) {
 
   // Admin stats
   if (url.pathname === "/api/admin/stats" && method === "GET") {
-    const [products, orders, feedbackList] = await Promise.all([
+    const [products, orders, feedbackList, customDesigns] = await Promise.all([
       readProducts(),
       readOrders(),
       readFeedback(),
+      readCustomDesigns(),
     ]);
     const totalRevenue = orders
       .filter((o) => o.status !== "cancelled")
@@ -353,6 +577,9 @@ async function handleApi(req, res, url, method) {
       newFeedback: feedbackList.filter((f) => f.status === "new").length,
       complaints: feedbackList.filter((f) => f.type === "complaint").length,
       suggestions: feedbackList.filter((f) => f.type === "suggestion").length,
+      totalCustomDesigns: customDesigns.length,
+      newCustomDesigns: customDesigns.filter((entry) => entry.status === "new").length,
+      confirmedCustomDesigns: customDesigns.filter((entry) => entry.status === "confirmed").length,
     };
     return sendJson(res, 200, { ok: true, stats });
   }
@@ -390,10 +617,50 @@ async function handleApi(req, res, url, method) {
     return sendJson(res, 200, { ok: true });
   }
 
+  // ===== Admin Custom Designs =====
+  if (url.pathname === "/api/admin/custom-designs" && method === "GET") {
+    const customDesigns = await readCustomDesigns();
+    return sendJson(res, 200, { ok: true, customDesigns });
+  }
+
+  const customDesignStatusMatch = url.pathname.match(/^\/api\/admin\/custom-designs\/(CD-[A-Za-z0-9\-_]+)\/status$/);
+  if (customDesignStatusMatch && method === "PUT") {
+    const id = customDesignStatusMatch[1];
+    const body = await readJsonBody(req, 8_000);
+    const status = String(body?.status || "").trim();
+    const validStatuses = ["new", "contacted", "confirmed"];
+    if (!validStatuses.includes(status)) {
+      return sendJson(res, 400, { ok: false, message: "حالة غير صحيحة" });
+    }
+
+    const customDesigns = await readCustomDesigns();
+    const idx = customDesigns.findIndex((entry) => entry.id === id);
+    if (idx < 0) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+
+    customDesigns[idx] = {
+      ...customDesigns[idx],
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+    await writeJson(CUSTOM_DESIGNS_FILE, customDesigns);
+    return sendJson(res, 200, { ok: true, customDesign: customDesigns[idx] });
+  }
+
+  const customDesignDeleteMatch = url.pathname.match(/^\/api\/admin\/custom-designs\/(CD-[A-Za-z0-9\-_]+)$/);
+  if (customDesignDeleteMatch && method === "DELETE") {
+    const id = customDesignDeleteMatch[1];
+    const customDesigns = await readCustomDesigns();
+    const next = customDesigns.filter((entry) => entry.id !== id);
+    if (next.length === customDesigns.length) return sendJson(res, 404, { ok: false, message: "غير موجود" });
+    await writeJson(CUSTOM_DESIGNS_FILE, next);
+    return sendJson(res, 200, { ok: true });
+  }
+
     return sendJson(res, 404, { ok: false, message: "Not found" });
   } catch (err) {
     console.error(`API error on ${method} ${url.pathname}:`, err);
-    return sendJson(res, 500, {
+    const status = Number(err?.statusCode) || (err?.publicMessage ? 400 : 500);
+    return sendJson(res, status, {
       ok: false,
       message: getPublicErrorMessage(err),
     });
@@ -412,45 +679,32 @@ async function readJson(file, fallback = []) {
 }
 
 async function writeJson(file, data) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = file + "." + process.pid + ".tmp";
-  const json = JSON.stringify(data, null, 2);
-  try {
-    await fs.writeFile(tmp, json, "utf8");
-    await fs.rename(tmp, file);
-  } catch (err) {
-    // Some hosting filesystems reject atomic rename/replace; fall back to direct write.
-    try {
-      await fs.writeFile(file, json, "utf8");
-    } finally {
-      await fs.unlink(tmp).catch(() => {});
-    }
-    if (!await fileExists(file)) {
-      throw createStorageError(file, err);
-    }
-  }
-}
-
-async function updateJson(file, fallback, updater) {
   const previous = jsonWriteQueues.get(file) || Promise.resolve();
-  let release;
-  const current = new Promise((resolve) => {
-    release = resolve;
-  });
-  const chained = previous.then(() => current, () => current);
-  jsonWriteQueues.set(file, chained);
-
-  try {
-    await previous.catch(() => {});
-    const data = await readJson(file, fallback);
-    const next = await updater(data);
-    await writeJson(file, next);
-    return next;
-  } finally {
-    release();
-    if (jsonWriteQueues.get(file) === chained) {
-      jsonWriteQueues.delete(file);
+  const current = previous.then(async () => {
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    const tmp = file + "." + process.pid + ".tmp";
+    const json = JSON.stringify(data, null, 2);
+    try {
+      await fs.writeFile(tmp, json, "utf8");
+      await fs.rename(tmp, file);
+    } catch (err) {
+      // Some hosting filesystems reject atomic rename/replace; fall back to direct write.
+      try {
+        await fs.writeFile(file, json, "utf8");
+      } finally {
+        await fs.unlink(tmp).catch(() => {});
+      }
+      if (!await fileExists(file)) {
+        throw createStorageError(file, err);
+      }
     }
+  });
+  const queued = current.catch(() => {});
+  jsonWriteQueues.set(file, queued);
+  try {
+    return await current;
+  } finally {
+    if (jsonWriteQueues.get(file) === queued) jsonWriteQueues.delete(file);
   }
 }
 
@@ -466,45 +720,35 @@ async function readFeedback() {
   return readJson(FEEDBACK_FILE, []);
 }
 
-function createOrder(cart, customer, products) {
-  const nextProducts = products.map((p) => ({
-    ...p,
-    sizes: Array.isArray(p.sizes) ? p.sizes.map((s) => ({ ...s })) : [],
-  }));
-  const byId = new Map(nextProducts.map((p) => [p.id, p]));
+async function readCustomDesigns() {
+  return readJson(CUSTOM_DESIGNS_FILE, []);
+}
+
+async function createOrder(cart, customer) {
+  const products = await readProducts();
+  const byId = new Map(products.map((p) => [p.id, p]));
   const items = [];
   const productsNotFound = [];
-  const invalidItems = [];
 
   for (const line of cart) {
-    const productId = String(line?.productId || "");
-    const p = byId.get(productId);
+    const p = byId.get(line.productId);
     if (!p || p.visibility !== "published") {
-      productsNotFound.push(productId);
+      productsNotFound.push(line.productId);
       continue;
     }
-    const size = String(line.size || "").trim();
-    const sizeEntry = p.sizes.find((s) => String(s.label || "").trim() === size);
-    const qty = Math.max(1, Math.min(99, Math.floor(Number(line.qty) || 1)));
-    if (!sizeEntry || Number(sizeEntry.stock) < qty) {
-      invalidItems.push({ productId: p.id, size, requestedQty: qty, availableQty: Number(sizeEntry?.stock) || 0 });
-      continue;
-    }
-    sizeEntry.stock = Math.max(0, Number(sizeEntry.stock) - qty);
+    const qty = Math.max(1, Math.floor(Number(line.qty) || 1));
     const unit = Number(p.salePrice) || Number(p.basePrice) || 0;
     items.push({
       productId: p.id,
       name: p.name,
-      size,
+      size: String(line.size || ""),
       qty,
       unit,
       subtotal: unit * qty,
     });
   }
 
-  if (productsNotFound.length || invalidItems.length || !items.length) {
-    return { ok: false, order: null, products: nextProducts, productsNotFound, invalidItems };
-  }
+  if (productsNotFound.length) return { order: null, productsNotFound };
 
   const total = items.reduce((s, i) => s + i.subtotal, 0);
   const id = `ORD-${crypto.randomBytes(5).toString("base64url").toUpperCase()}`;
@@ -518,7 +762,332 @@ function createOrder(cart, customer, products) {
     createdAt: now,
     history: [{ status: "pending", note: "تم إنشاء الطلب", at: now }],
   };
-  return { ok: true, order, products: nextProducts, productsNotFound: [], invalidItems: [] };
+  return { order, productsNotFound: [] };
+}
+
+async function readDiscountCodes() {
+  return readJson(DISCOUNT_CODES_FILE, []);
+}
+
+async function createOrderWithDiscount(cart, customer, options = {}) {
+  const pricing = await calculateOrderPricing(cart, {
+    discountCode: options.discountCode,
+    identity: options.identity,
+    req: options.req,
+    consumeDiscount: true,
+  });
+
+  if (pricing.productsNotFound.length) {
+    return { order: null, productsNotFound: pricing.productsNotFound, updatedDiscountCodes: null };
+  }
+  if (!pricing.discount.ok) {
+    const err = new Error(pricing.discount.message);
+    err.publicMessage = pricing.discount.message;
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const id = `ORD-${crypto.randomBytes(5).toString("base64url").toUpperCase()}`;
+  const now = new Date().toISOString();
+  const order = {
+    id,
+    status: "pending",
+    customer,
+    items: pricing.items,
+    subtotal: pricing.subtotal,
+    discountAmount: pricing.discountAmount,
+    total: pricing.total,
+    discount: pricing.discount.applied
+      ? {
+          id: pricing.discount.id,
+          code: pricing.discount.code,
+          discountPercent: pricing.discount.discountPercent,
+          amount: pricing.discountAmount,
+        }
+      : null,
+    createdAt: now,
+    history: [{ status: "pending", note: "تم إنشاء الطلب", at: now }],
+  };
+
+  if (pricing.updatedDiscountCodes && pricing.discount.id) {
+    const codeIdx = pricing.updatedDiscountCodes.findIndex((entry) => entry.id === pricing.discount.id);
+    if (codeIdx >= 0) {
+      pricing.updatedDiscountCodes[codeIdx] = {
+        ...pricing.updatedDiscountCodes[codeIdx],
+        lastUsedAt: now,
+        updatedAt: now,
+        usageRecords: [
+          ...(pricing.updatedDiscountCodes[codeIdx].usageRecords || []),
+          {
+            orderId: id,
+            usedAt: now,
+            combinedKey: pricing.discount.identityKeys.combinedKey,
+            deviceKey: pricing.discount.identityKeys.deviceKey,
+            browserKey: pricing.discount.identityKeys.browserKey,
+            ipKey: pricing.discount.identityKeys.ipKey,
+          },
+        ],
+      };
+    }
+  }
+
+  return {
+    order,
+    productsNotFound: [],
+    updatedDiscountCodes: pricing.updatedDiscountCodes,
+  };
+}
+
+async function calculateOrderPricing(cart, options = {}) {
+  const products = await readProducts();
+  const byId = new Map(products.map((p) => [p.id, p]));
+  const items = [];
+  const productsNotFound = [];
+
+  for (const line of cart) {
+    const p = byId.get(line.productId);
+    if (!p || p.visibility !== "published") {
+      productsNotFound.push(line.productId);
+      continue;
+    }
+    const qty = Math.max(1, Math.floor(Number(line.qty) || 1));
+    const unit = Number(p.salePrice) || Number(p.basePrice) || 0;
+    items.push({
+      productId: p.id,
+      name: p.name,
+      size: String(line.size || ""),
+      qty,
+      unit,
+      subtotal: unit * qty,
+    });
+  }
+
+  if (productsNotFound.length) {
+    return {
+      items: [],
+      subtotal: 0,
+      discountAmount: 0,
+      total: 0,
+      discount: { ok: true, applied: false, code: null },
+      productsNotFound,
+      updatedDiscountCodes: null,
+    };
+  }
+
+  const subtotal = items.reduce((s, i) => s + i.subtotal, 0);
+  const discount = await resolveDiscountApplication({
+    code: options.discountCode,
+    subtotal,
+    identity: options.identity,
+    req: options.req,
+    consumeDiscount: options.consumeDiscount,
+  });
+
+  if (!discount.ok) {
+    return {
+      items,
+      subtotal,
+      discountAmount: 0,
+      total: subtotal,
+      discount,
+      productsNotFound: [],
+      updatedDiscountCodes: null,
+    };
+  }
+
+  const discountAmount = discount.applied
+    ? Math.min(subtotal, Math.round((subtotal * discount.discountPercent) / 100))
+    : 0;
+
+  return {
+    items,
+    subtotal,
+    discountAmount,
+    total: Math.max(0, subtotal - discountAmount),
+    discount,
+    productsNotFound: [],
+    updatedDiscountCodes: discount.updatedDiscountCodes || null,
+  };
+}
+
+async function resolveDiscountApplication({ code, subtotal, identity, req, consumeDiscount }) {
+  if (!code) {
+    return {
+      ok: true,
+      applied: false,
+      code: null,
+      discountPercent: 0,
+      updatedDiscountCodes: null,
+    };
+  }
+
+  if (!identity?.deviceKey) {
+    return { ok: false, message: "تعذر التحقق من المتصفح الحالي" };
+  }
+  if (subtotal <= 0) {
+    return { ok: false, message: "إجمالي الطلب غير صالح لتطبيق الخصم" };
+  }
+
+  const codes = await readDiscountCodes();
+  const idx = codes.findIndex((entry) => entry.code === code);
+  if (idx < 0) {
+    return { ok: false, message: "كود الخصم غير صحيح" };
+  }
+
+  const entry = codes[idx];
+  const usageRecords = Array.isArray(entry.usageRecords) ? entry.usageRecords : [];
+  const usedCount = usageRecords.length;
+
+  if (entry.isActive === false) {
+    return { ok: false, message: "كود الخصم متوقف حالياً" };
+  }
+  if (usedCount >= entry.maxUses) {
+    return { ok: false, message: "كود الخصم انتهى" };
+  }
+
+  const alreadyUsed = usageRecords.some((record) => {
+    if (identity.combinedKey && record.combinedKey === identity.combinedKey) return true;
+    if (record.deviceKey === identity.deviceKey) return true;
+    if (identity.browserKey && record.browserKey === identity.browserKey) return true;
+    if (identity.ipKey && record.ipKey && record.ipKey === identity.ipKey) return true;
+    return false;
+  });
+  if (alreadyUsed) {
+    return { ok: false, message: "تم استخدام هذا الكود مسبقاً" };
+  }
+
+  const updatedDiscountCodes = consumeDiscount ? codes.map((item, itemIdx) => {
+    if (itemIdx !== idx) return item;
+    return {
+      ...item,
+      updatedAt: new Date().toISOString(),
+    };
+  }) : null;
+
+  return {
+    ok: true,
+    applied: true,
+    id: entry.id,
+    code: entry.code,
+    discountPercent: Number(entry.discountPercent) || 0,
+    maxUses: Number(entry.maxUses) || 0,
+    remainingUses: Math.max(0, (Number(entry.maxUses) || 0) - usedCount - (consumeDiscount ? 1 : 0)),
+    identityKeys: {
+      combinedKey: identity.combinedKey,
+      deviceKey: identity.deviceKey,
+      browserKey: identity.browserKey,
+      ipKey: identity.ipKey,
+    },
+    updatedDiscountCodes,
+  };
+}
+
+function formatDiscountCodeForAdmin(entry) {
+  const usageRecords = Array.isArray(entry?.usageRecords) ? entry.usageRecords : [];
+  const usedCount = usageRecords.length;
+  const maxUses = Math.max(1, Number(entry?.maxUses) || 1);
+  return {
+    id: entry.id,
+    code: entry.code,
+    discountPercent: Number(entry.discountPercent) || 0,
+    maxUses,
+    usedCount,
+    remainingUses: Math.max(0, maxUses - usedCount),
+    isActive: entry.isActive !== false,
+    exhausted: usedCount >= maxUses,
+    createdAt: entry.createdAt || null,
+    updatedAt: entry.updatedAt || null,
+    lastUsedAt: entry.lastUsedAt || null,
+  };
+}
+
+function normalizeDiscountCodeInput(body, existingCodes, currentId = null) {
+  const code = normalizeDiscountCode(body?.code);
+  const discountPercent = Math.floor(Number(body?.discountPercent) || 0);
+  const maxUses = Math.floor(Number(body?.maxUses) || 0);
+
+  if (!code) return { ok: false, message: "اكتب كود الخصم" };
+  if (!/^[A-Z0-9_-]{3,40}$/.test(code)) {
+    return { ok: false, message: "الكود يجب أن يكون من 3 إلى 40 حرفاً أو رقماً فقط" };
+  }
+  if (discountPercent < 1 || discountPercent > 100) {
+    return { ok: false, message: "نسبة الخصم يجب أن تكون بين 1% و 100%" };
+  }
+  if (maxUses < 1 || maxUses > 100000) {
+    return { ok: false, message: "عدد الاستخدامات يجب أن يكون أكبر من 0" };
+  }
+
+  const duplicate = existingCodes.find((entry) => entry.code === code && entry.id !== currentId);
+  if (duplicate) return { ok: false, message: "كود الخصم موجود بالفعل" };
+
+  return {
+    ok: true,
+    code,
+    discountPercent,
+    maxUses,
+  };
+}
+
+function normalizeDiscountCode(value) {
+  return String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
+}
+
+function normalizeBrowserId(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "";
+  return normalized.slice(0, 200);
+}
+
+function ensureVisitorIdentity(req, res, browserId = "") {
+  const cookieName = "mdvid";
+  const existing = verifyDeviceToken(getCookie(req, cookieName));
+  const payload = existing || verifyDeviceToken(createAndSetVisitorCookie(req, res, cookieName));
+  const normalizedBrowserId = normalizeBrowserId(browserId);
+  const deviceId = payload?.did || "";
+  const clientIp = getClientIp(req);
+
+  return {
+    browserId: normalizedBrowserId,
+    deviceId,
+    clientIp,
+    browserKey: normalizedBrowserId ? sha256(`browser:${normalizedBrowserId}`) : null,
+    deviceKey: deviceId ? sha256(`device:${deviceId}`) : null,
+    combinedKey: deviceId && normalizedBrowserId ? sha256(`combo:${deviceId}:${normalizedBrowserId}`) : null,
+    ipKey: clientIp && clientIp !== "unknown" ? sha256(`ip:${clientIp}`) : null,
+  };
+}
+
+function createAndSetVisitorCookie(req, res, cookieName) {
+  const token = createDeviceToken();
+  setCookie(res, cookieName, token, {
+    httpOnly: true,
+    sameSite: "Lax",
+    path: "/",
+    secure: shouldUseSecureCookie(req),
+    maxAge: DEVICE_TOKEN_MAX_AGE_SECONDS,
+  });
+  return token;
+}
+
+async function rollbackDiscountUsage(code, orderId) {
+  const codes = await readDiscountCodes();
+  const idx = codes.findIndex((entry) => entry.code === code);
+  if (idx < 0) return;
+
+  codes[idx] = {
+    ...codes[idx],
+    usageRecords: (codes[idx].usageRecords || []).filter((record) => record.orderId !== orderId),
+    updatedAt: new Date().toISOString(),
+  };
+  codes[idx].lastUsedAt = codes[idx].usageRecords.at(-1)?.usedAt || null;
+  await writeJson(DISCOUNT_CODES_FILE, codes);
+}
+
+function sha256(value) {
+  return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
 async function normalizeProductInput(id, body, now, existing = null) {
@@ -531,8 +1100,12 @@ async function normalizeProductInput(id, body, now, existing = null) {
   const salePrice = body?.salePrice != null ? Math.max(0, Number(body.salePrice) || 0) : null;
 
   let cardImage = existing?.cardImage ?? null;
-  if (body?.cardImage && body.cardImage !== existing?.cardImage) {
-    cardImage = await saveDataUrl(body.cardImage, id + "-card");
+  if (Object.prototype.hasOwnProperty.call(body ?? {}, "cardImage")) {
+    if (!body.cardImage) {
+      cardImage = null;
+    } else if (body.cardImage !== existing?.cardImage) {
+      cardImage = await saveDataUrl(body.cardImage, id + "-card");
+    }
   }
 
   const detailImages = [];
@@ -570,17 +1143,33 @@ async function normalizeProductInput(id, body, now, existing = null) {
 }
 
 async function saveDataUrl(dataUrl, name) {
-  const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-  if (!m) throw new Error("Invalid image data");
-  const mime = String(m[1] || "").toLowerCase();
-  const ext = ALLOWED_IMAGE_TYPES.get(mime);
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed) throw new Error("Invalid image data");
+  const ext = getImageExtension(parsed.mimeType);
   if (!ext) throw new Error("Unsupported image type");
-  const buf = Buffer.from(m[2], "base64");
+  const buf = Buffer.from(parsed.base64, "base64");
   if (buf.length > MAX_IMAGE_BYTES) throw new Error("Image is too large");
   const filename = `${name}-${Date.now()}.${ext}`;
   const dest = path.join(UPLOADS_DIR, filename);
   await fs.writeFile(dest, buf);
   return `/uploads/${filename}`;
+}
+
+function parseDataUrl(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:([^;]+);base64,(.+)$/);
+  if (!match) return null;
+  return {
+    mimeType: match[1],
+    base64: match[2],
+  };
+}
+
+function getImageExtension(mimeType) {
+  return ALLOWED_IMAGE_TYPES.get(String(mimeType || "").toLowerCase()) || null;
+}
+
+function normalizePhoneNumber(value) {
+  return String(value || "").replace(/\D/g, "");
 }
 
 // ==================== VALIDATION ====================
@@ -610,7 +1199,7 @@ function validateOrderInput(cart, customer) {
     return { ok: false, message: "Building is required" };
   }
   if (!String(customer.address || "").trim()) {
-    return { ok: false, message: "Address is required" };
+    return { ok: false, message: "يرجى إدخال العنوان التفصيلي" };
   }
   return { ok: true };
 }
@@ -632,7 +1221,6 @@ function sendJson(res, status, data) {
     ...securityHeaders(),
     "content-type": "application/json",
     "content-length": Buffer.byteLength(body),
-    "x-content-type-options": "nosniff",
   });
   res.end(body);
 }
@@ -811,6 +1399,8 @@ async function ensureDataFiles() {
   await ensureJsonFile(PRODUCTS_FILE, []);
   await ensureJsonFile(ORDERS_FILE, []);
   await ensureJsonFile(FEEDBACK_FILE, []);
+  await ensureJsonFile(DISCOUNT_CODES_FILE, []);
+  await ensureJsonFile(CUSTOM_DESIGNS_FILE, []);
 }
 
 async function ensureJsonFile(file, fallback) {
@@ -908,6 +1498,7 @@ function createStorageError(file, cause) {
 }
 
 function getPublicErrorMessage(err) {
+  if (err?.publicMessage) return err.publicMessage;
   if (err?.code === "STORAGE_WRITE_FAILED") {
     return `تعذر حفظ البيانات داخل ${err.file}. تأكد أن مجلد data ومساره على الاستضافة قابلان للكتابة.`;
   }

@@ -7,7 +7,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.2, user-scalable=yes, viewport-fit=cover"
     />
     <title>MD Streetwear</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20260416-4" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260423-1" />
   </head>
   <body>
     <header class="topbar">
@@ -20,6 +20,7 @@
         </div>
         <nav class="nav">
           <a class="pill active" href="/">المنتجات</a>
+          <a class="pill" href="/custom-design.html">أرسل تصميمك</a>
         </nav>
         <div class="actions">
           <button class="icon-btn" id="helpBtn" type="button" title="مساعدة / شكاوي">
@@ -40,6 +41,9 @@
       <section class="hero">
         <h1>أحدث التصميمات</h1>
         <p>ملابس حصرية بأسلوب عصري — جودة عالية وتصميم مميز</p>
+        <div class="hero-actions">
+          <a class="btn hero-cta" href="/custom-design.html">أرسل تصميمك</a>
+        </div>
       </section>
 
       <div id="empty" class="muted-box" style="display:none; text-align:center; padding:40px">
@@ -49,26 +53,36 @@
     </main>
 
     <!-- Cart Drawer -->
-    <div class="drawer-backdrop" id="drawerBackdrop"></div>
-    <aside class="drawer" id="drawer" role="dialog" aria-label="السلة">
+    <div class="drawer-backdrop" id="drawerBackdrop" hidden></div>
+    <aside
+      class="drawer"
+      id="drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-hidden="true"
+      aria-label="السلة"
+      hidden
+    >
       <div class="drawer-header">
-        <div style="font-weight:900; font-size:18px">🛒 السلة</div>
-        <div style="display:flex;align-items:center;gap:10px">
+        <div class="drawer-title">🛒 السلة</div>
+        <div class="drawer-meta">
           <span class="mini" id="cartCount">0 عنصر</span>
           <button class="xbtn" id="drawerClose" type="button">✕</button>
         </div>
       </div>
       <div class="drawer-body">
         <div id="cartEmpty" class="muted-box" style="text-align:center;padding:32px">السلة فارغة</div>
-        <div id="cartList"></div>
+        <div id="cartList" class="cart-list"></div>
       </div>
       <div class="drawer-footer">
-        <div class="price-row" style="justify-content:space-between;margin-bottom:12px">
-          <span style="font-weight:700">الإجمالي</span>
+        <div class="price-row drawer-total">
+          <span class="drawer-total-label">الإجمالي</span>
           <span class="price" id="cartTotal">٠ ج.م</span>
         </div>
-        <a href="/checkout.html" class="btn" id="checkoutBtn" style="display:block;text-align:center;text-decoration:none">إتمام الشراء</a>
-        <button class="btn secondary" id="continueBtn" type="button" style="margin-top:8px">متابعة التسوق</button>
+        <div class="drawer-actions">
+          <a href="/checkout.html" class="btn drawer-primary" id="checkoutBtn">إتمام الشراء</a>
+          <button class="btn secondary drawer-secondary" id="continueBtn" type="button">متابعة التسوق</button>
+        </div>
       </div>
     </aside>
 
@@ -172,6 +186,6 @@
       </div>
     </section>
 
-    <script type="module" src="/assets/index.js?v=20260416-4"></script>
+    <script type="module" src="/assets/index.js?v=20260423-1"></script>
   </body>
 </html>
