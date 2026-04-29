@@ -11,8 +11,15 @@ uploads/*.jpeg
 uploads/*.png
 uploads/*.gif
 uploads/*.webp
+public/uploads/*.jpg
+public/uploads/*.jpeg
+public/uploads/*.png
+public/uploads/*.gif
+public/uploads/*.webp
 # Keep uploads folder structure
 !uploads/.gitkeep
+!public/uploads/.gitkeep
+archive-*.tar.gz
 
 # Environment
 .env

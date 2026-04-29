@@ -250,8 +250,6 @@ function closeProductModal() {
 // ── Cart ──
 let drawerOpened = false;
 let drawerCloseTimer = null;
-let drawerTransitionToken = 0;
-const DRAWER_ANIMATION_MS = 320;
 
 function bindCart() {
   // Toggle: نفس الزر يفتح ويقفل
@@ -267,27 +265,20 @@ function bindCart() {
   backdrop.addEventListener("click", closeProductModal);
 
   // مهم جدا: نخفي الدروار تماما عند بداية التحميل
-  drawer.hidden = true;
-  drawerBackdrop.hidden = true;
-  drawer.setAttribute("aria-hidden", "true");
+  drawer.style.display = "none";
 }
 
 function openDrawer() {
-  drawerTransitionToken += 1;
-
   if (drawerCloseTimer) {
     clearTimeout(drawerCloseTimer);
     drawerCloseTimer = null;
   }
 
   renderCart();
-  drawer.hidden = false;
-  drawerBackdrop.hidden = false;
-  drawer.setAttribute("aria-hidden", "false");
-  document.body.classList.add("drawer-open");
+  drawer.style.display = "block";
+  show(drawerBackdrop, true);
 
   requestAnimationFrame(() => {
-    show(drawerBackdrop, true);
     drawer.classList.add("show");
   });
 
@@ -297,20 +288,23 @@ function openDrawer() {
 function closeDrawer() {
   if (!drawerOpened) return;
 
-  const transitionToken = ++drawerTransitionToken;
-
-  drawer.classList.remove("show");
   show(drawerBackdrop, false);
-  drawerOpened = false;
-  drawer.setAttribute("aria-hidden", "true");
-  document.body.classList.remove("drawer-open");
+  drawer.classList.remove("show");
 
-  drawerCloseTimer = setTimeout(() => {
-    if (transitionToken !== drawerTransitionToken) return;
-    drawer.hidden = true;
-    drawerBackdrop.hidden = true;
-    drawerCloseTimer = null;
-  }, DRAWER_ANIMATION_MS + 80);
+  let finished = false;
+  const finalizeClose = () => {
+    if (finished) return;
+    finished = true;
+    drawer.style.display = "none"; // يختفي بالكامل ومش يبان طرفه
+    drawerOpened = false;
+    if (drawerCloseTimer) {
+      clearTimeout(drawerCloseTimer);
+      drawerCloseTimer = null;
+    }
+  };
+
+  drawer.addEventListener("transitionend", finalizeClose, { once: true });
+  drawerCloseTimer = setTimeout(finalizeClose, 380);
 }
 
 function syncCartUI(cart = getCart()) {

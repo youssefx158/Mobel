@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "start": "node server.mjs",
+    "dev": "node server.mjs",
+    "build": "node --check config.mjs && node --check server.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -22,7 +23,7 @@
     "@vitejs/plugin-react": "5.1.1",
     "tailwindcss": "4.1.17",
     "typescript": "5.9.3",
-    "vite": "7.2.4",
+    "vite": "7.3.2",
     "vite-plugin-singlefile": "2.3.0"
   }
 }
