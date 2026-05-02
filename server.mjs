@@ -99,7 +99,7 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", getRequestOrigin(req));
     const method = (req.method || "GET").toUpperCase();
 
-    if (config.forceHttps && !isSecureRequest(req)) {
+    if (config.forceHttps && shouldRedirectToHttps(req)) {
       return sendRedirect(res, `https://${url.host}${url.pathname}${url.search}`);
     }
 
@@ -1354,6 +1354,16 @@ function isSecureRequest(req) {
   return getRequestProtocol(req) === "https";
 }
 
+function shouldRedirectToHttps(req) {
+  // يعمل redirect فقط لو البروكسي صرّح إن الطلب جاي HTTP
+  // ده بيمنع redirect loop لما نوصل مباشرة بـ IP بدون SSL
+  const forwardedProto = String(req.headers["x-forwarded-proto"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  return forwardedProto === "http";
+}
+
 function shouldUseSecureCookie(req) {
   return config.forceSecureCookies || isSecureRequest(req);
 }
@@ -1422,12 +1432,14 @@ async function fileExists(file) {
 
 function getServerUrls(port) {
   const networkHost = detectNetworkHost();
-  const domain = process.env.DOMAIN || "mdstore.website";
+  const localBase = `http://localhost:${port}`;
+  const networkBase = networkHost ? `http://${networkHost}:${port}` : null;
+  const publicBase = config.baseUrl || localBase;
   return {
-    store: `https://${domain}/`,
-    admin: `https://${domain}/md-control-panel`,
-    networkStore: networkHost ? `http://${networkHost}:${port}/` : null,
-    networkAdmin: networkHost ? `http://${networkHost}:${port}/md-control-panel` : null,
+    store: `${publicBase}/`,
+    admin: `${publicBase}/md-control-panel`,
+    networkStore: networkBase ? `${networkBase}/` : null,
+    networkAdmin: networkBase ? `${networkBase}/md-control-panel` : null,
   };
 }
 
