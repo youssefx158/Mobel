@@ -1,4 +1,4 @@
-import { api, fmtEGP, getCart, qs, setCart } from "./app.js";
+import { api, fmtEGP, getCart, getTsToken, qs, renderTurnstile, setCart, waitForTurnstile } from "./app.js";
 import { GOVERNORATES } from "./governorates.js";
 
 const BROWSER_ID_KEY = "md_browser_id_v1";
@@ -33,6 +33,7 @@ const state = {
 };
 
 boot();
+waitForTurnstile(() => renderTurnstile("cf-order-ts"));
 
 function boot() {
   govSel.innerHTML =
@@ -223,6 +224,7 @@ async function onSubmit(e) {
         customer,
         discountCode: state.appliedDiscount?.code || null,
         browserId: state.browserId,
+        cfToken: getTsToken(),
       }),
     });
     setCart([]);

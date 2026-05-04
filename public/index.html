@@ -7,6 +7,7 @@
       content="width=device-width, initial-scale=1.0, maximum-scale=1.2, user-scalable=yes, viewport-fit=cover"
     />
     <title>MD Streetwear</title>
+    <meta name="cf-ts-key" content="">
     <link rel="stylesheet" href="/assets/styles.css?v=20260423-1" />
   </head>
   <body>
@@ -156,6 +157,7 @@
               <div class="err">يرجى كتابة تفاصيل الشكوى</div>
             </div>
             <div class="err" id="complaintErr" style="display:none;margin-bottom:8px"></div>
+            <div id="cf-complaint-ts" style="margin-bottom:10px"></div>
             <button class="btn" id="sendComplaint" type="button">إرسال الشكوى</button>
           </div>
 
@@ -172,6 +174,7 @@
               <div class="err">يرجى كتابة الاقتراح</div>
             </div>
             <div class="err" id="suggestionErr" style="display:none;margin-bottom:8px"></div>
+            <div id="cf-suggestion-ts" style="margin-bottom:10px"></div>
             <button class="btn" id="sendSuggestion" type="button">إرسال الاقتراح</button>
           </div>
 
@@ -186,6 +189,7 @@
       </div>
     </section>
 
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
     <script type="module" src="/assets/index.js?v=20260423-1"></script>
   </body>
 </html>

@@ -3,12 +3,13 @@ import { api, bytesToDataUrl, fmtEGP, qs, qsa, show } from "./app.js";
 const root = qs("#root");
 
 let state = {
-  view: "login", // login | products | orders | feedback | stats
+  view: "login",
   products: [],
   orders: [],
   feedback: [],
   customDesigns: [],
   discountCodes: [],
+  customDesignSettings: null,
   stats: null,
   activeNav: "products",
 };
@@ -89,6 +90,7 @@ function renderShell() {
           🎨 التصميمات المخصصة
           ${newCustomDesigns > 0 ? `<span style="background:var(--gold);color:#07111d;border-radius:999px;padding:1px 7px;font-size:11px;font-weight:900;margin-right:4px">${newCustomDesigns}</span>` : ""}
         </button>
+        <button id="navDesignSettings" class="btn sidebtn ${state.activeNav==='designSettings'?'active':''}" type="button">⚙️ إعدادات التصميم</button>
         <button id="navOrders"   class="btn sidebtn ${state.activeNav==='orders'?'active':''}"   type="button">🛒 إدارة الطلبات</button>
         <div style="flex:1"></div>
         <button id="logout" class="btn danger sidebtn" type="button">تسجيل خروج</button>
@@ -131,9 +133,12 @@ function renderShell() {
   qs("#navCustomDesigns").addEventListener("click", async () => {
     state.activeNav = "customDesigns"; await loadCustomDesigns(); renderShell(); renderCustomDesigns();
   });
+  qs("#navDesignSettings").addEventListener("click", async () => {
+    state.activeNav = "designSettings"; await loadCustomDesignSettings(); renderShell(); renderDesignSettings();
+  });
   qs("#logout").addEventListener("click", async () => {
     try { await api("/api/admin/logout", { method: "POST", body: "{}" }); } finally {
-      state = { view: "login", products: [], orders: [], feedback: [], customDesigns: [], discountCodes: [], stats: null, activeNav: "products" };
+      state = { view: "login", products: [], orders: [], feedback: [], customDesigns: [], discountCodes: [], customDesignSettings: null, stats: null, activeNav: "products" };
       renderLogin();
     }
   });
@@ -148,7 +153,7 @@ function renderShell() {
 //  LOAD DATA
 // ══════════════════════════════════════════
 async function loadAll() {
-  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback(), loadDiscountCodes(), loadCustomDesigns()]);
+  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback(), loadDiscountCodes(), loadCustomDesigns(), loadCustomDesignSettings()]);
 }
 async function loadProducts() {
   const d = await api("/api/admin/products"); state.products = d.products || [];
@@ -167,6 +172,12 @@ async function loadCustomDesigns() {
 }
 async function loadDiscountCodes() {
   const d = await api("/api/admin/discount-codes"); state.discountCodes = d.codes || [];
+}
+async function loadCustomDesignSettings() {
+  try {
+    const d = await api("/api/admin/custom-design-settings");
+    state.customDesignSettings = d.settings || null;
+  } catch { state.customDesignSettings = null; }
 }
 
 // ══════════════════════════════════════════
@@ -1101,15 +1112,16 @@ function renderCustomDesignGrid(filter, q) {
     const card = document.createElement("article");
     card.className = "custom-design-card";
     card.style.animationDelay = `${index * 40}ms`;
-    const previewImage = entry.generatedImage || entry.referenceImages?.[0] || "";
-    const referenceStrip = Array.isArray(entry.referenceImages) && entry.referenceImages.length
-      ? `
-          <div class="custom-design-reference-strip">
-            ${entry.referenceImages.map((src) => `
-              <img class="custom-design-reference-thumb" src="${escapeAttr(src)}" alt="" loading="lazy" />
-            `).join("")}
-          </div>
-        `
+    const previewImage = entry.composedImages?.[0] || entry.uploadedImages?.[0] || entry.referenceImages?.[0] || "";
+    const allThumbs = [
+      ...(entry.composedImages || []),
+      ...(entry.uploadedImages || []),
+      ...(entry.referenceImages || []),
+    ];
+    const referenceStrip = allThumbs.length
+      ? `<div class="custom-design-reference-strip">
+           ${allThumbs.map((src) => `<img class="custom-design-reference-thumb" src="${escapeAttr(src)}" alt="" loading="lazy" />`).join("")}
+         </div>`
       : "";
     card.innerHTML = `
       ${previewImage
@@ -1211,16 +1223,51 @@ function openCustomDesignModal(entry) {
   };
 
   title.textContent = `تفاصيل الطلب ${entry.id}`;
+
+  const composedImages  = entry.composedImages  || [];
+  const uploadedImages  = entry.uploadedImages  || [];
+  const referenceImages = entry.referenceImages || [];
+
   body.innerHTML = `
     <div class="custom-design-modal">
-      <div class="custom-design-modal-grid">
-        ${(entry.referenceImages || []).map((src, index) => `
-          <div class="custom-design-modal-shot">
-            <div class="custom-design-modal-shot-label">الصورة ${index + 1}</div>
-            <img src="${escapeAttr(src)}" alt="مرجع ${index + 1}" />
+
+      ${composedImages.length ? `
+        <div style="margin-bottom:14px">
+          <div class="custom-design-modal-label" style="margin-bottom:8px;font-size:13px">التيشرتان مع التصميم المخصص</div>
+          <div class="custom-design-modal-grid">
+            ${composedImages.map((src, i) => `
+              <div class="custom-design-modal-shot">
+                <div class="custom-design-modal-shot-label">${i === 0 ? "الوجه الأمامي" : "الوجه الخلفي"}</div>
+                <img src="${escapeAttr(src)}" alt="تصميم ${i + 1}" />
+              </div>
+            `).join("")}
           </div>
-        `).join("")}
-      </div>
+        </div>
+      ` : ""}
+
+      ${uploadedImages.length ? `
+        <div class="custom-design-modal-box" style="margin-bottom:14px">
+          <div class="custom-design-modal-label" style="margin-bottom:8px">الصور التي رفعها العميل (${uploadedImages.length})</div>
+          <div style="display:flex;flex-wrap:wrap;gap:8px">
+            ${uploadedImages.map((src) => `
+              <a href="${escapeAttr(src)}" target="_blank" rel="noopener">
+                <img src="${escapeAttr(src)}" style="width:80px;height:80px;object-fit:cover;border-radius:10px;border:1px solid rgba(255,255,255,.12)" alt="" loading="lazy" />
+              </a>
+            `).join("")}
+          </div>
+        </div>
+      ` : ""}
+
+      ${referenceImages.length ? `
+        <div class="custom-design-modal-grid" style="margin-bottom:14px">
+          ${referenceImages.map((src, i) => `
+            <div class="custom-design-modal-shot">
+              <div class="custom-design-modal-shot-label">صورة مرجعية ${i + 1}</div>
+              <img src="${escapeAttr(src)}" alt="مرجع ${i + 1}" />
+            </div>
+          `).join("")}
+        </div>
+      ` : ""}
 
       <div class="custom-design-modal-info">
         <div class="custom-design-modal-line">
@@ -1245,18 +1292,202 @@ function openCustomDesignModal(entry) {
         <div class="custom-design-modal-label" style="margin-bottom:8px">تفاصيل التواصل</div>
         <div class="custom-design-text">${escapeHtml(entry.contactDetails || "—")}</div>
       </div>
-
-      ${(entry.generatedText || "").trim() ? `
-        <div class="custom-design-modal-box">
-          <div class="custom-design-modal-label" style="margin-bottom:8px">ملاحظات إضافية</div>
-          <div class="custom-design-text">${escapeHtml(entry.generatedText)}</div>
-        </div>
-      ` : ""}
     </div>
   `;
 
   show(backdrop, true);
   show(modal, true);
+}
+
+// ══════════════════════════════════════════
+//  DESIGN SETTINGS
+// ══════════════════════════════════════════
+function renderDesignSettings() {
+  const view = qs("#view");
+  const settings = state.customDesignSettings || { tshirts: [{ image: null, zone: null }, { image: null, zone: null }] };
+
+  // working copies
+  const pending = [
+    { image: settings.tshirts?.[0]?.image || null, zone: settings.tshirts?.[0]?.zone || null, newDataUrl: null },
+    { image: settings.tshirts?.[1]?.image || null, zone: settings.tshirts?.[1]?.zone || null, newDataUrl: null },
+  ];
+
+  view.innerHTML = `
+    <div class="toolbar" style="margin-bottom:16px">
+      <div>
+        <div style="font-weight:900;font-size:18px">⚙️ إعدادات التصميم المخصص</div>
+        <div class="mini">حدد صور التيشرت الأمامي والخلفي ومنطقة الطباعة المسموح بها للعميل</div>
+      </div>
+      <button id="saveDesignSettings" class="btn" type="button" style="margin:0;width:auto;padding:10px 22px">💾 حفظ الإعدادات</button>
+    </div>
+    <div id="settingsStatus" style="display:none;margin-bottom:12px;padding:10px 14px;border-radius:12px;font-weight:700"></div>
+    <div class="design-settings-grid">
+      ${[0, 1].map((i) => `
+        <div class="tshirt-setting-card">
+          <div style="font-weight:900;font-size:15px;margin-bottom:4px">${i === 0 ? "الوجه الأمامي" : "الوجه الخلفي"}</div>
+          <div class="mini" style="margin-bottom:10px">ارفع صورة التيشرت ثم اسحب على الصورة لتحديد منطقة الطباعة</div>
+          <label class="upload-photo-btn" for="tshirtImg${i}" style="display:inline-flex;margin-bottom:6px">
+            📷 ${pending[i].image ? "تغيير الصورة" : "رفع صورة التيشرت"}
+          </label>
+          <input type="file" id="tshirtImg${i}" accept="image/*" hidden />
+
+          <div class="tshirt-setting-preview" id="settingPreview${i}">
+            ${pending[i].image
+              ? `<img class="tshirt-setting-img" src="${escapeAttr(pending[i].image)}" alt="" id="settingImg${i}" />`
+              : `<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:13px">لا توجد صورة بعد</div>`}
+            <div class="zone-draw-overlay" id="zoneOverlay${i}" ${pending[i].zone ? `style="display:block;left:${pending[i].zone.leftPct}%;top:${pending[i].zone.topPct}%;width:${pending[i].zone.widthPct}%;height:${pending[i].zone.heightPct}%"` : ""}></div>
+          </div>
+
+          ${pending[i].zone
+            ? `<div class="mini" id="zoneInfo${i}">منطقة الطباعة: ${Math.round(pending[i].zone.leftPct)}% يسار، ${Math.round(pending[i].zone.topPct)}% أعلى، ${Math.round(pending[i].zone.widthPct)}% عرض، ${Math.round(pending[i].zone.heightPct)}% ارتفاع</div>`
+            : `<div class="mini" id="zoneInfo${i}" style="color:var(--muted)">اسحب على الصورة لتحديد منطقة الطباعة</div>`}
+
+          ${pending[i].zone ? `
+            <button class="btn danger" id="clearZone${i}" type="button" style="margin-top:6px;width:auto;padding:6px 14px;font-size:12px">✕ مسح المنطقة</button>
+          ` : ""}
+        </div>
+      `).join("")}
+    </div>
+  `;
+
+  const status = qs("#settingsStatus");
+
+  [0, 1].forEach((i) => {
+    // Image upload
+    const input = qs(`#tshirtImg${i}`);
+    input.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      e.target.value = "";
+      try {
+        const dataUrl = await adminOptimizeImage(file, 1400);
+        pending[i].newDataUrl = dataUrl;
+        const preview = qs(`#settingPreview${i}`);
+        const existingImg = preview.querySelector(".tshirt-setting-img");
+        if (existingImg) {
+          existingImg.src = dataUrl;
+        } else {
+          const img = document.createElement("img");
+          img.className = "tshirt-setting-img";
+          img.id = `settingImg${i}`;
+          img.src = dataUrl;
+          img.alt = "";
+          preview.insertBefore(img, preview.firstChild);
+        }
+      } catch (err) { showSettingsStatus(status, "❌ " + (err.message || "تعذر تحميل الصورة"), "error"); }
+    });
+
+    // Zone drawing
+    setupZoneDraw(i, pending);
+
+    // Clear zone
+    const clearBtn = qs(`#clearZone${i}`);
+    if (clearBtn) {
+      clearBtn.addEventListener("click", () => {
+        pending[i].zone = null;
+        const overlay = qs(`#zoneOverlay${i}`);
+        if (overlay) overlay.style.display = "none";
+        const info = qs(`#zoneInfo${i}`);
+        if (info) { info.textContent = "اسحب على الصورة لتحديد منطقة الطباعة"; info.style.color = "var(--muted)"; }
+        clearBtn.remove();
+      });
+    }
+  });
+
+  qs("#saveDesignSettings").addEventListener("click", async () => {
+    const btn = qs("#saveDesignSettings");
+    btn.disabled = true; btn.textContent = "جاري الحفظ...";
+    try {
+      const tshirts = pending.map((p) => ({
+        image: p.newDataUrl || p.image || null,
+        zone: p.zone || null,
+      }));
+      const data = await api("/api/admin/custom-design-settings", {
+        method: "POST",
+        body: JSON.stringify({ tshirts }),
+      });
+      state.customDesignSettings = data.settings;
+      showSettingsStatus(status, "✅ تم حفظ الإعدادات بنجاح", "success");
+    } catch (err) {
+      showSettingsStatus(status, "❌ " + (err.message || "تعذر الحفظ"), "error");
+    } finally {
+      btn.disabled = false; btn.textContent = "💾 حفظ الإعدادات";
+    }
+  });
+}
+
+function setupZoneDraw(sideIdx, pending) {
+  const previewEl = qs(`#settingPreview${sideIdx}`);
+  const overlayEl = qs(`#zoneOverlay${sideIdx}`);
+  const infoEl    = qs(`#zoneInfo${sideIdx}`);
+  if (!previewEl || !overlayEl) return;
+
+  let drawing = false, sx = 0, sy = 0;
+
+  previewEl.addEventListener("pointerdown", (e) => {
+    const imgEl = previewEl.querySelector(".tshirt-setting-img");
+    if (!imgEl) return;
+    e.preventDefault();
+    previewEl.setPointerCapture(e.pointerId);
+    drawing = true;
+    const rect = previewEl.getBoundingClientRect();
+    sx = (e.clientX - rect.left) / rect.width  * 100;
+    sy = (e.clientY - rect.top)  / rect.height * 100;
+    overlayEl.style.display = "block";
+    overlayEl.style.left = sx + "%"; overlayEl.style.top = sy + "%";
+    overlayEl.style.width = "0%";    overlayEl.style.height = "0%";
+  });
+
+  previewEl.addEventListener("pointermove", (e) => {
+    if (!drawing) return;
+    const rect = previewEl.getBoundingClientRect();
+    const cx = (e.clientX - rect.left) / rect.width  * 100;
+    const cy = (e.clientY - rect.top)  / rect.height * 100;
+    const x = Math.min(sx, cx), y = Math.min(sy, cy);
+    const w = Math.abs(cx - sx), h = Math.abs(cy - sy);
+    overlayEl.style.left = x + "%"; overlayEl.style.top = y + "%";
+    overlayEl.style.width = w + "%"; overlayEl.style.height = h + "%";
+    pending[sideIdx].zone = { leftPct: x, topPct: y, widthPct: w, heightPct: h };
+  });
+
+  previewEl.addEventListener("pointerup", () => {
+    if (!drawing) return;
+    drawing = false;
+    const z = pending[sideIdx].zone;
+    if (z && infoEl) {
+      infoEl.textContent = `منطقة الطباعة: ${Math.round(z.leftPct)}% يسار، ${Math.round(z.topPct)}% أعلى، ${Math.round(z.widthPct)}% عرض، ${Math.round(z.heightPct)}% ارتفاع`;
+      infoEl.style.color = "var(--teal2)";
+    }
+  });
+}
+
+function showSettingsStatus(el, msg, tone) {
+  el.style.display = "block";
+  el.textContent = msg;
+  el.style.background = tone === "success" ? "rgba(34,197,94,.12)" : "rgba(239,68,68,.12)";
+  el.style.border = `1px solid ${tone === "success" ? "rgba(34,197,94,.3)" : "rgba(239,68,68,.3)"}`;
+  el.style.color = tone === "success" ? "#86efac" : "#fda4af";
+}
+
+async function adminOptimizeImage(file, maxSide) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width  = Math.round(img.width  * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.92));
+      };
+      img.onerror = () => reject(new Error("تعذر تحميل الصورة"));
+      img.src = String(reader.result || "");
+    };
+    reader.onerror = () => reject(new Error("تعذر قراءة الصورة"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function renderStats() {

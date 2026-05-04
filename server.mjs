@@ -20,6 +20,7 @@ const ORDERS_FILE = path.join(DATA_DIR, "orders.json");
 const FEEDBACK_FILE = path.join(DATA_DIR, "feedback.json");
 const DISCOUNT_CODES_FILE = path.join(DATA_DIR, "discount-codes.json");
 const CUSTOM_DESIGNS_FILE = path.join(DATA_DIR, "custom-designs.json");
+const CUSTOM_DESIGN_SETTINGS_FILE = path.join(DATA_DIR, "custom-design-settings.json");
 const MAX_IMAGE_BYTES = 2_000_000;
 const ALLOWED_IMAGE_TYPES = new Map([
   ["image/jpeg", "jpg"],
@@ -162,7 +163,8 @@ async function handleApi(req, res, url, method) {
     const body = await readJsonBody(req, 64_000);
     const password = String(body?.password || "");
 
-    if (password !== config.adminPassword) {
+    const pwHash = (s) => crypto.createHash("sha256").update(String(s)).digest();
+    if (!crypto.timingSafeEqual(pwHash(password), pwHash(config.adminPassword))) {
       const next = lock || { attempts: 0, lockUntilMs: 0 };
       next.attempts += 1;
       if (next.attempts >= config.lockoutMaxAttempts) {
@@ -249,6 +251,9 @@ async function handleApi(req, res, url, method) {
   // Orders (public)
   if (url.pathname === "/api/orders" && method === "POST") {
     const body = await readJsonBody(req, 256_000);
+    if (!await verifyTurnstile(String(body?.cfToken || ""), getClientIp(req))) {
+      return sendJson(res, 403, { ok: false, message: "فشل التحقق، أعد المحاولة" });
+    }
     const cart = Array.isArray(body?.cart) ? body.cart : [];
     const customer = body?.customer || {};
     const discountCode = normalizeDiscountCode(body?.discountCode);
@@ -307,6 +312,9 @@ async function handleApi(req, res, url, method) {
   // ===== FEEDBACK (public - submit) =====
   if (url.pathname === "/api/feedback" && method === "POST") {
     const body = await readJsonBody(req, 8_000);
+    if (!await verifyTurnstile(String(body?.cfToken || ""), getClientIp(req))) {
+      return sendJson(res, 403, { ok: false, message: "فشل التحقق، أعد المحاولة" });
+    }
     const type = String(body?.type || "").trim(); // "complaint" | "suggestion"
     const message = String(body?.message || "").trim();
     const orderId = String(body?.orderId || "").trim();
@@ -336,14 +344,26 @@ async function handleApi(req, res, url, method) {
     return sendJson(res, 201, { ok: true, feedbackId: id });
   }
 
+  // Custom design settings (public read)
+  if (url.pathname === "/api/custom-design-settings" && method === "GET") {
+    const settings = await readCustomDesignSettings();
+    return sendJson(res, 200, { ok: true, settings });
+  }
+
   if (url.pathname === "/api/custom-designs" && method === "POST") {
-    const body = await readJsonBody(req, 18_000_000);
+    const body = await readJsonBody(req, 30_000_000);
+    if (!await verifyTurnstile(String(body?.cfToken || ""), getClientIp(req))) {
+      return sendJson(res, 403, { ok: false, message: "فشل التحقق، أعد المحاولة" });
+    }
     const phone = normalizePhoneNumber(body?.phone);
     const contactDetails = String(body?.contactDetails || "").trim();
-    const referenceImages = Array.isArray(body?.images)
-      ? body.images.map((item) => String(item || "").trim()).filter(Boolean)
-      : Array.isArray(body?.referenceImages)
-      ? body.referenceImages.map((item) => String(item || "").trim()).filter(Boolean)
+
+    // New fields: uploadedImages (user's photos) and composedImages (rendered t-shirts)
+    const uploadedImages = Array.isArray(body?.uploadedImages)
+      ? body.uploadedImages.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const composedImages = Array.isArray(body?.composedImages)
+      ? body.composedImages.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
 
     if (!/^01[0125]\d{8}$/.test(phone)) {
@@ -352,29 +372,35 @@ async function handleApi(req, res, url, method) {
     if (!contactDetails || contactDetails.length < 6) {
       return sendJson(res, 400, { ok: false, message: "اكتب تفاصيل كافية للتواصل وتأكيد الطلب" });
     }
-    if (referenceImages.length !== 2) {
-      return sendJson(res, 400, { ok: false, message: "ارفع الصورتين أولاً" });
+    if (uploadedImages.length === 0) {
+      return sendJson(res, 400, { ok: false, message: "ارفع صورة واحدة على الأقل للتصميم" });
     }
 
     const customDesigns = await readCustomDesigns();
     const id = `CD-${crypto.randomBytes(6).toString("base64url").toUpperCase()}`;
-    const savedReferenceImages = [];
-    for (let i = 0; i < referenceImages.length; i++) {
-      const src = referenceImages[i];
-      if (!src.startsWith("data:")) {
-        return sendJson(res, 400, { ok: false, message: "صيغة الصور غير صحيحة" });
-      }
-      const saved = await saveDataUrl(src, `${id}-ref-${i + 1}`);
-      if (saved) savedReferenceImages.push(saved);
+
+    const savedUploadedImages = [];
+    for (let i = 0; i < uploadedImages.length; i++) {
+      const src = uploadedImages[i];
+      if (!src.startsWith("data:")) return sendJson(res, 400, { ok: false, message: "صيغة الصور غير صحيحة" });
+      const saved = await saveDataUrl(src, `${id}-upload-${i + 1}`);
+      if (saved) savedUploadedImages.push(saved);
+    }
+
+    const savedComposedImages = [];
+    for (let i = 0; i < composedImages.length; i++) {
+      const src = composedImages[i];
+      if (!src.startsWith("data:")) continue;
+      const saved = await saveDataUrl(src, `${id}-composed-${i + 1}`, { maxBytes: 8_000_000 });
+      if (saved) savedComposedImages.push(saved);
     }
 
     const entry = {
       id,
       phone,
       contactDetails,
-      generatedImage: null,
-      generatedText: null,
-      referenceImages: savedReferenceImages,
+      composedImages: savedComposedImages,
+      uploadedImages: savedUploadedImages,
       status: "new",
       createdAt: new Date().toISOString(),
     };
@@ -656,6 +682,39 @@ async function handleApi(req, res, url, method) {
     return sendJson(res, 200, { ok: true });
   }
 
+  // Admin custom design settings
+  if (url.pathname === "/api/admin/custom-design-settings" && method === "GET") {
+    const settings = await readCustomDesignSettings();
+    return sendJson(res, 200, { ok: true, settings });
+  }
+
+  if (url.pathname === "/api/admin/custom-design-settings" && method === "POST") {
+    const body = await readJsonBody(req, 8_000_000);
+    const rawTshirts = Array.isArray(body?.tshirts) ? body.tshirts : [];
+    const current = await readCustomDesignSettings();
+
+    const tshirts = [];
+    for (let i = 0; i < 2; i++) {
+      const raw = rawTshirts[i] || {};
+      let image = current.tshirts?.[i]?.image || null;
+
+      if (raw.image && raw.image.startsWith("data:")) {
+        image = await saveDataUrl(raw.image, `tshirt-${i + 1}`, { maxBytes: 4_000_000 });
+      } else if (raw.image && raw.image.startsWith("/uploads/")) {
+        image = raw.image;
+      } else if (raw.clearImage) {
+        image = null;
+      }
+
+      const zone = raw.zone || null;
+      tshirts.push({ image, zone });
+    }
+
+    const settings = { tshirts };
+    await writeJson(CUSTOM_DESIGN_SETTINGS_FILE, settings);
+    return sendJson(res, 200, { ok: true, settings });
+  }
+
     return sendJson(res, 404, { ok: false, message: "Not found" });
   } catch (err) {
     console.error(`API error on ${method} ${url.pathname}:`, err);
@@ -722,6 +781,12 @@ async function readFeedback() {
 
 async function readCustomDesigns() {
   return readJson(CUSTOM_DESIGNS_FILE, []);
+}
+
+async function readCustomDesignSettings() {
+  return readJson(CUSTOM_DESIGN_SETTINGS_FILE, {
+    tshirts: [{ image: null, zone: null }, { image: null, zone: null }],
+  });
 }
 
 async function createOrder(cart, customer) {
@@ -1090,6 +1155,23 @@ function sha256(value) {
   return crypto.createHash("sha256").update(String(value)).digest("hex");
 }
 
+async function verifyTurnstile(token, ip) {
+  const secretKey = config.turnstileSecretKey;
+  const siteKey = config.turnstileSiteKey;
+  if (!secretKey || !siteKey || !token || typeof token !== "string") return true;
+  try {
+    const body = new URLSearchParams({ secret: secretKey, response: token, remoteip: ip });
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      body,
+    });
+    const data = await res.json();
+    return data.success === true;
+  } catch {
+    return true; // fail-open: لو Cloudflare مش شغال، الموقع يفضل يشتغل
+  }
+}
+
 async function normalizeProductInput(id, body, now, existing = null) {
   const name = String(body?.name || "").trim();
   const description = String(body?.description || "").trim();
@@ -1142,13 +1224,13 @@ async function normalizeProductInput(id, body, now, existing = null) {
   };
 }
 
-async function saveDataUrl(dataUrl, name) {
+async function saveDataUrl(dataUrl, name, { maxBytes = MAX_IMAGE_BYTES } = {}) {
   const parsed = parseDataUrl(dataUrl);
   if (!parsed) throw new Error("Invalid image data");
   const ext = getImageExtension(parsed.mimeType);
   if (!ext) throw new Error("Unsupported image type");
   const buf = Buffer.from(parsed.base64, "base64");
-  if (buf.length > MAX_IMAGE_BYTES) throw new Error("Image is too large");
+  if (buf.length > maxBytes) throw new Error("Image is too large");
   const filename = `${name}-${Date.now()}.${ext}`;
   const dest = path.join(UPLOADS_DIR, filename);
   await fs.writeFile(dest, buf);
@@ -1181,6 +1263,9 @@ function validateOrderInput(cart, customer) {
   if (!customer.name || String(customer.name).trim().split(/\s+/).filter(Boolean).length < 2) {
     return { ok: false, message: "يرجى إدخال الاسم الثلاثي" };
   }
+  if (String(customer.name).trim().length > 100) {
+    return { ok: false, message: "الاسم طويل جداً" };
+  }
   const phone = String(customer.phone || "").replace(/\D/g, "");
   if (!/^01[0125]\d{8}$/.test(phone)) {
     return { ok: false, message: "رقم الهاتف غير صحيح" };
@@ -1195,11 +1280,20 @@ function validateOrderInput(cart, customer) {
   if (!String(customer.area || "").trim()) {
     return { ok: false, message: "Area is required" };
   }
+  if (String(customer.area).trim().length > 100) {
+    return { ok: false, message: "المنطقة طويلة جداً" };
+  }
   if (!String(customer.building || "").trim()) {
     return { ok: false, message: "Building is required" };
   }
+  if (String(customer.building).trim().length > 100) {
+    return { ok: false, message: "اسم المبنى طويل جداً" };
+  }
   if (!String(customer.address || "").trim()) {
     return { ok: false, message: "يرجى إدخال العنوان التفصيلي" };
+  }
+  if (String(customer.address).trim().length > 500) {
+    return { ok: false, message: "العنوان التفصيلي طويل جداً" };
   }
   return { ok: true };
 }
@@ -1244,12 +1338,12 @@ async function serveFile(res, abs) {
   try {
     stat = await fs.stat(abs);
   } catch {
-    res.writeHead(404, { "content-type": "text/plain" });
+    res.writeHead(404, { ...securityHeaders(), "content-type": "text/plain" });
     res.end("Not found");
     return;
   }
   if (!stat.isFile()) {
-    res.writeHead(403, { "content-type": "text/plain" });
+    res.writeHead(403, { ...securityHeaders(), "content-type": "text/plain" });
     res.end("Forbidden");
     return;
   }
@@ -1391,6 +1485,19 @@ function securityHeaders() {
     "x-frame-options": "DENY",
     "referrer-policy": "strict-origin-when-cross-origin",
     "permissions-policy": "camera=(), microphone=(), geolocation=()",
+    "strict-transport-security": "max-age=31536000; includeSubDomains",
+    "content-security-policy": [
+      "default-src 'self'",
+      "script-src 'self' https://challenges.cloudflare.com",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "frame-src https://challenges.cloudflare.com",
+      "connect-src 'self' https://challenges.cloudflare.com",
+      "font-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join("; "),
   };
 }
 
@@ -1411,6 +1518,9 @@ async function ensureDataFiles() {
   await ensureJsonFile(FEEDBACK_FILE, []);
   await ensureJsonFile(DISCOUNT_CODES_FILE, []);
   await ensureJsonFile(CUSTOM_DESIGNS_FILE, []);
+  await ensureJsonFile(CUSTOM_DESIGN_SETTINGS_FILE, {
+    tshirts: [{ image: null, zone: null }, { image: null, zone: null }],
+  });
 }
 
 async function ensureJsonFile(file, fallback) {

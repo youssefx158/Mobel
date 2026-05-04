@@ -114,3 +114,37 @@ export function bytesToDataUrl(file) {
     reader.readAsDataURL(file);
   });
 }
+
+// ── Cloudflare Turnstile ──
+let _tsToken = "";
+let _tsWidgetId = null;
+
+export function renderTurnstile(containerId) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const siteKey = document.querySelector('meta[name="cf-ts-key"]')?.content || "";
+  if (!siteKey || !window.turnstile) return;
+  if (_tsWidgetId !== null) {
+    try { window.turnstile.reset(_tsWidgetId); } catch {}
+  }
+  _tsToken = "";
+  _tsWidgetId = window.turnstile.render(el, {
+    sitekey: siteKey,
+    callback: (t) => { _tsToken = t; },
+    "expired-callback": () => { _tsToken = ""; },
+    "error-callback": () => { _tsToken = ""; },
+    theme: "dark",
+    size: "compact",
+  });
+}
+
+export function getTsToken() { return _tsToken; }
+
+export function waitForTurnstile(fn) {
+  if (window.turnstile) { fn(); return; }
+  const start = Date.now();
+  const id = setInterval(() => {
+    if (window.turnstile) { clearInterval(id); fn(); }
+    else if (Date.now() - start > 8000) { clearInterval(id); }
+  }, 150);
+}

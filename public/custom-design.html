@@ -4,10 +4,11 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1.0, maximum-scale=1.2, user-scalable=yes, viewport-fit=cover"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
     <title>أرسل تصميمك | MD Streetwear</title>
-    <link rel="stylesheet" href="/assets/styles.css?v=20260423-1" />
+    <meta name="cf-ts-key" content="">
+    <link rel="stylesheet" href="/assets/styles.css?v=20260504-2" />
   </head>
   <body>
     <header class="topbar">
@@ -28,75 +29,88 @@
       </div>
     </header>
 
-    <main class="container custom-page">
-      <section class="custom-hero">
-        <div>
-          <span class="custom-kicker">CUSTOM T-SHIRT STUDIO</span>
-          <h1>ارفع صورك وأرسل طلبك</h1>
-          <p>
-            ارفع صورتين مرجعيتين للتصميم، ثم اكتب بياناتك وأرسل الطلب مباشرة، وسنتواصل معك لتأكيده.
-          </p>
-          <div class="custom-steps">
-            <div class="custom-step">1. ارفع الصورتين</div>
-            <div class="custom-step">2. اكتب بيانات التواصل</div>
-            <div class="custom-step">3. أرسل الطلب</div>
-          </div>
-        </div>
-        <div class="custom-hero-card">
-          <div class="custom-hero-badge">جاهز الآن</div>
-          <h2>طلبات تصميم مخصصة</h2>
-          <p>
-            بعد إرسال الصورتين، سنراجع الطلب يدويًا ونتواصل معك لتأكيد التنفيذ والتفاصيل.
-          </p>
-        </div>
-      </section>
+    <main class="container">
+      <div class="studio-wrap">
 
-      <section class="custom-builder">
-        <div class="custom-upload-grid">
-          <label class="custom-upload-card" for="designImage1">
-            <input id="designImage1" type="file" accept="image/*" hidden />
-            <div class="custom-upload-label">الصورة الأولى</div>
-            <div class="custom-upload-hint">ارفع المرجع الأول للتصميم</div>
-            <div class="custom-upload-preview" id="preview1">
-              <span>اضغط لاختيار الصورة</span>
+        <!-- ── Canvas Area ── -->
+        <div class="studio-canvas-area">
+          <div class="studio-heading">
+            <span class="custom-kicker">CUSTOM T-SHIRT STUDIO</span>
+            <h1>صمّم تيشرتك بنفسك</h1>
+            <p>ارفع صورك وضعها على التيشرت، ثم أرسل طلبك وسنتواصل معك لتأكيد التصميم.</p>
+          </div>
+
+          <div class="canvas-tabs" id="canvasTabs">
+            <button class="canvas-tab active" data-idx="0" type="button">الوجه الأمامي</button>
+            <button class="canvas-tab" data-idx="1" type="button">الوجه الخلفي</button>
+          </div>
+
+          <div class="tshirt-wrap" id="tshirtWrap0">
+            <div class="tshirt-canvas" id="tshirtCanvas0">
+              <div class="tshirt-empty">
+                <div style="font-size:50px;opacity:.25">👕</div>
+                <div>جاري التحميل...</div>
+              </div>
             </div>
-          </label>
-
-          <label class="custom-upload-card" for="designImage2">
-            <input id="designImage2" type="file" accept="image/*" hidden />
-            <div class="custom-upload-label">الصورة الثانية</div>
-            <div class="custom-upload-hint">ارفع المرجع الثاني لإكمال الفكرة</div>
-            <div class="custom-upload-preview" id="preview2">
-              <span>اضغط لاختيار الصورة</span>
+          </div>
+          <div class="tshirt-wrap hidden" id="tshirtWrap1">
+            <div class="tshirt-canvas" id="tshirtCanvas1">
+              <div class="tshirt-empty">
+                <div style="font-size:50px;opacity:.25">👕</div>
+                <div>جاري التحميل...</div>
+              </div>
             </div>
-          </label>
+          </div>
+
+          <div class="canvas-hint">
+            انقر على صورة في القائمة لإضافتها للتيشرت ← اسحبها لتغيير مكانها ← اسحب الزوايا لتغيير حجمها
+          </div>
         </div>
 
-        <div class="custom-contact-card custom-contact-card-inline">
-          <div class="custom-result-title">بيانات الطلب</div>
-          <div class="mini" style="margin-bottom:14px">بعد رفع الصورتين، اكتب بياناتك وسنراجع الطلب ونتواصل معك.</div>
-          <div class="field" id="phoneField">
-            <label for="customerPhone">رقم الموبايل *</label>
-            <input id="customerPhone" inputmode="tel" placeholder="01xxxxxxxxx" />
-            <div class="err">يرجى إدخال رقم موبايل صحيح</div>
+        <!-- ── Controls ── -->
+        <div class="studio-controls">
+
+          <div class="photos-panel">
+            <div class="photos-header">
+              <div style="font-weight:900;font-size:15px">صورك</div>
+              <label class="upload-photo-btn" for="photoUploadInput">+ إضافة صور</label>
+              <input type="file" id="photoUploadInput" accept="image/*" multiple hidden />
+            </div>
+            <div class="photo-strip" id="photoStrip">
+              <div class="photo-strip-empty">ارفع صورة لتظهر هنا، ثم انقر عليها لإضافتها للتيشرت.</div>
+            </div>
           </div>
-          <div class="field" id="detailsField">
-            <label for="customerDetails">تفاصيل أخرى للتواصل لتأكيد الطلب *</label>
-            <textarea
-              id="customerDetails"
-              rows="6"
-              placeholder="اكتب أي تفاصيل مهمة مثل الاسم، أفضل وقت للتواصل، أو ملاحظات تخص الطلب..."
-            ></textarea>
-            <div class="err">يرجى كتابة تفاصيل كافية للتواصل</div>
+
+          <div class="studio-form-card">
+            <div class="custom-result-title">بيانات الطلب</div>
+            <div class="mini" style="margin-bottom:14px;color:var(--muted)">
+              بعد وضع الصور على التيشرت، اكتب بياناتك وأرسل الطلب.
+            </div>
+            <div class="field" id="phoneField">
+              <label for="customerPhone">رقم الموبايل *</label>
+              <input id="customerPhone" inputmode="tel" placeholder="01xxxxxxxxx" />
+              <div class="err">يرجى إدخال رقم موبايل صحيح</div>
+            </div>
+            <div class="field" id="detailsField">
+              <label for="customerDetails">تفاصيل للتواصل *</label>
+              <textarea
+                id="customerDetails"
+                rows="4"
+                placeholder="اكتب أي تفاصيل مهمة مثل الاسم أو أفضل وقت للتواصل أو ملاحظات خاصة..."
+              ></textarea>
+              <div class="err">يرجى كتابة تفاصيل كافية للتواصل</div>
+            </div>
+            <div id="cf-design-ts" style="margin-bottom:10px"></div>
+            <div class="err" id="submitError" style="display:none;margin-bottom:8px"></div>
+            <button class="btn" id="submitDesignBtn" type="button">إرسال الطلب</button>
+            <div class="custom-success" id="submitSuccess" style="display:none;margin-top:12px"></div>
           </div>
-          <div class="mini" id="uploadStatus">يجب رفع صورتين قبل الإرسال.</div>
-          <div class="err" id="submitError" style="display:none"></div>
-          <button class="btn" id="submitDesignBtn" type="button">إرسال الطلب</button>
-          <div class="custom-success" id="submitSuccess" style="display:none"></div>
+
         </div>
-    </section>
+      </div>
     </main>
 
-    <script type="module" src="/assets/custom-design.js?v=20260423-1"></script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+    <script type="module" src="/assets/custom-design.js?v=20260504-2"></script>
   </body>
 </html>

@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>تأكيد الطلب | MD Streetwear</title>
+    <meta name="cf-ts-key" content="">
     <link rel="stylesheet" href="/assets/styles.css?v=20260420-1" />
   </head>
   <body>
@@ -113,6 +114,7 @@
               <div class="err">أدخل العنوان التفصيلي</div>
             </div>
 
+            <div id="cf-order-ts" style="margin-bottom:12px"></div>
             <button id="submitBtn" class="btn" type="submit" style="font-size:16px;padding:14px">
               ✅ تأكيد الطلب
             </button>
@@ -141,6 +143,7 @@
       </div>
     </div>
 
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
     <script type="module" src="/assets/checkout.js?v=20260420-1"></script>
   </body>
 </html>

@@ -98,6 +98,8 @@ export const config = {
   adminPassword: resolveAdminPassword(),
   sessionSecret: resolveSessionSecret(),
   adminSecret: resolveAdminSecret(),
+  turnstileSecretKey: process.env.CLOUDFLARE_TURNSTILE_SECRET_KEY || "",
+  turnstileSiteKey: process.env.CLOUDFLARE_TURNSTILE_SITE_KEY || "",
   lockoutMaxAttempts: 5,
   lockoutMinutes: 15,
   sessionMaxAgeHours: resolveInt("MD_SESSION_MAX_AGE_HOURS", 12, 1, 168),

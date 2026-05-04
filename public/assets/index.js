@@ -1,6 +1,6 @@
 import {
   addToCart, api, cartCount, clampInt, fmtEGP,
-  getCart, qs, qsa, show, updateQty,
+  getCart, getTsToken, qs, qsa, renderTurnstile, show, updateQty, waitForTurnstile,
 } from "./app.js";
 
 // ── Elements ──
@@ -461,10 +461,12 @@ function bindHelp() {
   qs("#chooseComplaint").addEventListener("click", () => {
     qs("#helpStep1").style.display = "none";
     qs("#helpStepComplaint").style.display = "block";
+    waitForTurnstile(() => renderTurnstile("cf-complaint-ts"));
   });
   qs("#chooseSuggestion").addEventListener("click", () => {
     qs("#helpStep1").style.display = "none";
     qs("#helpStepSuggestion").style.display = "block";
+    waitForTurnstile(() => renderTurnstile("cf-suggestion-ts"));
   });
 
   // Back buttons
@@ -532,7 +534,7 @@ async function submitFeedback(type, message, orderId, errEl, btnId) {
   try {
     await api("/api/feedback", {
       method: "POST",
-      body: JSON.stringify({ type, message, orderId: orderId || null }),
+      body: JSON.stringify({ type, message, orderId: orderId || null, cfToken: getTsToken() }),
     });
     // Show success
     qs("#helpStep1").style.display = "none";
