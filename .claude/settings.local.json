@@ -1,16 +1,9 @@
 {
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
-      "Bash(node server.mjs)",
-      "Bash(findstr \":10955\")",
-      "Bash(curl *)",
-      "Bash(pkill -f \"node server.mjs\")",
-      "PowerShell(Stop-Process *)",
-      "PowerShell(Get-NetTCPConnection *)",
-      "WebSearch",
-      "Bash(pkill -f \"node test-server.mjs\")",
-      "Bash(node test-server.mjs)",
-      "PowerShell(Get-Process *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

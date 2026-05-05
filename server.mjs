@@ -3,6 +3,8 @@ import os from "node:os";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+
+const SERVER_VERSION = "20260505-1";
 import { fileURLToPath } from "node:url";
 
 import { config } from "./config.mjs";
@@ -150,7 +152,7 @@ async function handleApi(req, res, url, method) {
   try {
     if (method === "OPTIONS") return sendJson(res, 204, {});
 
-    if (url.pathname === "/api/health") return sendJson(res, 200, { ok: true });
+    if (url.pathname === "/api/health") return sendJson(res, 200, { ok: true, version: SERVER_VERSION });
 
   // Auth
   if (url.pathname === "/api/admin/login" && method === "POST") {
@@ -689,7 +691,7 @@ async function handleApi(req, res, url, method) {
   }
 
   if (url.pathname === "/api/admin/custom-design-settings" && method === "POST") {
-    const body = await readJsonBody(req, 8_000_000);
+    const body = await readJsonBody(req, 15_000_000);
     const rawTshirts = Array.isArray(body?.tshirts) ? body.tshirts : [];
     const current = await readCustomDesignSettings();
 
