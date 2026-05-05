@@ -1392,11 +1392,19 @@ async function serveFile(res, abs) {
     ".ttf": "font/ttf",
   }[ext] || "application/octet-stream";
 
+  // HTML/JS/CSS must never be cached so deploys take effect immediately.
+  // Images/fonts can stay cached long (filenames in /uploads/ have unique timestamps).
+  const isCacheable = [".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico", ".woff2", ".woff", ".ttf"].includes(ext);
+  const cacheControl = isCacheable
+    ? "public, max-age=31536000, immutable"
+    : "no-store, no-cache, must-revalidate, max-age=0";
+
   res.writeHead(200, {
     ...securityHeaders(),
     "content-type": mime,
     "content-length": stat.size,
-    "cache-control": ext === ".html" ? "no-cache" : "public, max-age=31536000",
+    "cache-control": cacheControl,
+    ...(isCacheable ? {} : { "pragma": "no-cache", "expires": "0" }),
   });
   const stream = (await import("node:fs")).createReadStream(abs);
   stream.pipe(res);
