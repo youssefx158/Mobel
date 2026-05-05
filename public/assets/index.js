@@ -1,7 +1,7 @@
 import {
   addToCart, api, cartCount, clampInt, fmtEGP,
   getCart, getTsToken, qs, qsa, renderTurnstile, show, updateQty, waitForTurnstile,
-} from "./app.js";
+} from "./app.js?v=20260505-4";
 
 // ── Elements ──
 const gridEl     = qs("#grid");

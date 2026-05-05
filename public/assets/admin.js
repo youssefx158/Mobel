@@ -1,4 +1,4 @@
-import { api, bytesToDataUrl, fmtEGP, qs, qsa, show } from "./app.js";
+import { api, bytesToDataUrl, fmtEGP, qs, qsa, show } from "./app.js?v=20260505-4";
 
 const root = qs("#root");
 

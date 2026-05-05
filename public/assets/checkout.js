@@ -1,5 +1,5 @@
-import { api, fmtEGP, getCart, getTsToken, qs, renderTurnstile, setCart, waitForTurnstile } from "./app.js";
-import { GOVERNORATES } from "./governorates.js";
+import { api, fmtEGP, getCart, getTsToken, qs, renderTurnstile, setCart, waitForTurnstile } from "./app.js?v=20260505-4";
+import { GOVERNORATES } from "./governorates.js?v=20260505-4";
 
 const BROWSER_ID_KEY = "md_browser_id_v1";
 
