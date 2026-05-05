@@ -4,7 +4,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 
-const SERVER_VERSION = "20260505-1";
+const SERVER_VERSION = "20260505-2-debug";
 import { fileURLToPath } from "node:url";
 
 import { config } from "./config.mjs";
@@ -149,10 +149,34 @@ server.listen(config.port, "0.0.0.0", () => {
 });
 
 async function handleApi(req, res, url, method) {
+  // Normalize: decode + strip trailing slashes (other than root) so routes match
+  // even when reverse proxies or clients add a trailing slash or %-encode the path.
+  try {
+    const rawPath = url.pathname || "/";
+    let normalized;
+    try { normalized = decodeURIComponent(rawPath); } catch { normalized = rawPath; }
+    if (normalized.length > 1 && normalized.endsWith("/")) {
+      normalized = normalized.replace(/\/+$/, "");
+    }
+    if (normalized !== rawPath) {
+      url.pathname = normalized;
+    }
+  } catch { /* keep original pathname */ }
+
   try {
     if (method === "OPTIONS") return sendJson(res, 204, {});
 
     if (url.pathname === "/api/health") return sendJson(res, 200, { ok: true, version: SERVER_VERSION });
+
+    if (url.pathname === "/api/debug/routes") {
+      return sendJson(res, 200, {
+        ok: true,
+        version: SERVER_VERSION,
+        hasCustomDesignSettingsAdmin: true,
+        receivedPath: url.pathname,
+        receivedMethod: method,
+      });
+    }
 
   // Auth
   if (url.pathname === "/api/admin/login" && method === "POST") {
@@ -717,6 +741,7 @@ async function handleApi(req, res, url, method) {
     return sendJson(res, 200, { ok: true, settings });
   }
 
+    console.warn(`[API 404] ${method} ${url.pathname} (raw: ${req.url})`);
     return sendJson(res, 404, { ok: false, message: "Not found" });
   } catch (err) {
     console.error(`API error on ${method} ${url.pathname}:`, err);
