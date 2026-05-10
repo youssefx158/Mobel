@@ -38,6 +38,11 @@ const helpBackdrop = qs("#helpBackdrop");
 const helpModal    = qs("#helpModal");
 const helpClose    = qs("#helpClose");
 
+const designBtn      = qs("#designBtn");
+const designBackdrop = qs("#designBackdrop");
+const designModal    = qs("#designModal");
+const designClose    = qs("#designClose");
+
 let products = [];
 let activeProduct = null;
 
@@ -49,6 +54,7 @@ async function boot() {
   bindProductModal();
   bindTracking();
   bindHelp();
+  bindDesign();
 
   try {
     const data = await api("/api/products");
@@ -85,7 +91,7 @@ function renderGrid() {
         <button class="btn" type="button">تسوق الآن</button>
       </div>
     `;
-    el.addEventListener("click", () => openProduct(p.id));
+    el.addEventListener("click", () => openProduct(p.id, el));
     gridEl.appendChild(el);
   });
 }
@@ -103,7 +109,7 @@ function computePriceInfo(product) {
 }
 
 // ── Product Modal ──
-function openProduct(productId) {
+function openProduct(productId, triggerEl) {
   const p = products.find((x) => x.id === productId);
   if (!p) return;
   activeProduct = p;
@@ -172,8 +178,24 @@ function openProduct(productId) {
     </div>
   `;
 
+  // Set card-origin for animation
+  if (triggerEl) {
+    const rect = triggerEl.getBoundingClientRect();
+    const dx = Math.round((rect.left + rect.width / 2) - window.innerWidth / 2);
+    const dy = Math.round((rect.top + rect.height / 2) - window.innerHeight / 2);
+    modal.style.setProperty('--modal-dx', `${dx}px`);
+    modal.style.setProperty('--modal-dy', `${dy}px`);
+  } else {
+    modal.style.setProperty('--modal-dx', '0px');
+    modal.style.setProperty('--modal-dy', '0px');
+  }
+
   wireGallery();
   wireProductControls();
+
+  // Clear any lingering close animation then trigger open
+  modal.classList.remove('closing');
+  void modal.offsetWidth;
   show(backdrop, true);
   show(modal, true);
 }
@@ -243,8 +265,20 @@ function wireProductControls() {
 }
 
 function closeProductModal() {
-  show(backdrop, false);
-  show(modal, false);
+  if (!modal.classList.contains('show')) return;
+
+  modal.classList.add('closing');
+
+  const cleanup = () => {
+    modal.classList.remove('show', 'closing');
+    show(backdrop, false);
+  };
+
+  const timer = setTimeout(cleanup, 300);
+  modal.addEventListener('animationend', () => {
+    clearTimeout(timer);
+    cleanup();
+  }, { once: true });
 }
 
 // ── Cart ──
@@ -565,6 +599,80 @@ function resetHelp() {
   qs("#suggestionMsg").value = "";
   qs("#complaintErr").style.display = "none";
   qs("#suggestionErr").style.display = "none";
+}
+
+// ── Design Submission ──
+function bindDesign() {
+  designBtn.addEventListener('click', openDesignModal);
+
+  const closeDesign = () => {
+    show(designBackdrop, false);
+    show(designModal, false);
+    resetDesignForm();
+  };
+
+  designClose.addEventListener('click', closeDesign);
+  designBackdrop.addEventListener('click', closeDesign);
+  qs('#sendDesign').addEventListener('click', submitDesign);
+  qs('#designSuccessClose').addEventListener('click', closeDesign);
+}
+
+function openDesignModal() {
+  resetDesignForm();
+  show(designBackdrop, true);
+  show(designModal, true);
+}
+
+function resetDesignForm() {
+  qs('#designFormWrap').style.display = 'block';
+  qs('#designSuccess').style.display = 'none';
+  qs('#designName').value = '';
+  qs('#designPhone').value = '';
+  qs('#designMsg').value = '';
+  qs('#designErr').style.display = 'none';
+  ['#fDesignName', '#fDesignPhone', '#fDesignMsg'].forEach((sel) =>
+    qs(sel).classList.remove('bad')
+  );
+}
+
+async function submitDesign() {
+  const name  = qs('#designName').value.trim();
+  const phone = qs('#designPhone').value.trim();
+  const msg   = qs('#designMsg').value.trim();
+  const errEl = qs('#designErr');
+  errEl.style.display = 'none';
+
+  let valid = true;
+  const setField = (sel, ok) => qs(sel).classList.toggle('bad', !ok);
+
+  setField('#fDesignName',  (valid = name.length > 0 && valid, name.length > 0));
+  setField('#fDesignPhone', (() => { const ok = /^01[0-9]{9}$/.test(phone); if (!ok) valid = false; return ok; })());
+  setField('#fDesignMsg',   (() => { const ok = msg.length >= 5;             if (!ok) valid = false; return ok; })());
+
+  if (!valid) return;
+
+  const btn = qs('#sendDesign');
+  btn.disabled = true;
+  btn.textContent = 'جاري الإرسال...';
+
+  try {
+    await api('/api/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        type: 'suggestion',
+        message: `[تصميم] ${name} | ${phone}\n\n${msg}`,
+        orderId: null,
+      }),
+    });
+    qs('#designFormWrap').style.display = 'none';
+    qs('#designSuccess').style.display  = 'block';
+  } catch (err) {
+    errEl.textContent = err.message || 'حدث خطأ، حاول مرة أخرى';
+    errEl.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'إرسال التصميم ✏️';
+  }
 }
 
 // ── Helpers ──

@@ -40,6 +40,19 @@
       <section class="hero">
         <h1>أحدث التصميمات</h1>
         <p>ملابس حصرية بأسلوب عصري — جودة عالية وتصميم مميز</p>
+        <div class="design-cta-wrap">
+          <span class="design-cta-new">جديد ✨</span>
+          <button class="design-cta-btn" id="designBtn" type="button" aria-label="ارسل تصميمك">
+            <span class="design-cta-icon">✏️</span>
+            <div class="design-cta-text">
+              <span class="design-cta-label">ارسل تصميمك</span>
+              <span class="design-cta-sub">حوّل فكرتك لقطعة حقيقية</span>
+            </div>
+            <svg class="design-cta-arrow" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+              <path d="M15 10H5M5 10L9 6M5 10L9 14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
       </section>
 
       <div id="empty" class="muted-box" style="display:none; text-align:center; padding:40px">
@@ -178,6 +191,43 @@
             <div class="mini" style="margin-top:8px">شكراً لتواصلك معنا، سنرد قريباً.</div>
             <button class="btn" id="helpSuccessClose" type="button" style="margin-top:16px">إغلاق</button>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Design Submission Modal -->
+    <div class="backdrop" id="designBackdrop"></div>
+    <section class="modal" id="designModal" role="dialog" aria-modal="true" style="width:min(560px,94vw)">
+      <div class="modal-inner">
+        <div class="modal-close">
+          <div style="font-weight:900">✏️ ارسل تصميمك</div>
+          <button class="xbtn" id="designClose" type="button">✕</button>
+        </div>
+        <div id="designFormWrap">
+          <p class="mini" style="margin-bottom:20px;line-height:1.7">شارك معنا فكرتك أو تصميمك وسنتواصل معك في أقرب وقت 🎨</p>
+          <div class="field" id="fDesignName">
+            <label for="designName">اسمك *</label>
+            <input id="designName" placeholder="اكتب اسمك الكريم" autocomplete="name" />
+            <div class="err">يرجى إدخال اسمك</div>
+          </div>
+          <div class="field" id="fDesignPhone">
+            <label for="designPhone">رقم هاتفك *</label>
+            <input id="designPhone" type="tel" dir="ltr" placeholder="01XXXXXXXXX" autocomplete="tel" />
+            <div class="err">يرجى إدخال رقم هاتف مصري صحيح</div>
+          </div>
+          <div class="field" id="fDesignMsg">
+            <label for="designMsg">وصف التصميم *</label>
+            <textarea id="designMsg" rows="5" placeholder="اشرح تصميمك بالتفصيل… الألوان، الشكل، الرسالة، النص إن وجد…" style="resize:vertical"></textarea>
+            <div class="err">يرجى وصف تصميمك (5 أحرف على الأقل)</div>
+          </div>
+          <div class="err" id="designErr" style="display:none;margin-bottom:10px"></div>
+          <button class="btn design-submit-btn" id="sendDesign" type="button">إرسال التصميم ✏️</button>
+        </div>
+        <div id="designSuccess" style="display:none;text-align:center;padding:32px 16px">
+          <div style="font-size:52px;margin-bottom:12px">🎨</div>
+          <div style="font-weight:900;font-size:20px;margin-bottom:8px">تم استلام تصميمك!</div>
+          <p class="mini" style="font-size:14px;line-height:1.7">شكراً لثقتك بنا — سنراجع تصميمك ونتواصل معك قريباً.</p>
+          <button class="btn" id="designSuccessClose" type="button" style="margin-top:20px">إغلاق</button>
         </div>
       </div>
     </section>
