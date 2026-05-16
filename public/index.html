@@ -8,7 +8,7 @@
     />
     <title>MD Streetwear</title>
     <meta name="cf-ts-key" content="">
-    <link rel="stylesheet" href="/assets/styles.css?v=20260505-3" />
+    <link rel="stylesheet" href="/assets/styles.css?v=20260505-4" />
   </head>
   <body>
     <header class="topbar">
@@ -43,7 +43,27 @@
         <h1>أحدث التصميمات</h1>
         <p>ملابس حصرية بأسلوب عصري — جودة عالية وتصميم مميز</p>
         <div class="hero-actions">
-          <a class="btn hero-cta" href="/custom-design.html">أرسل تصميمك</a>
+          <button class="cat-filter-btn" id="catBtn" type="button">
+            <span class="cat-filter-btn-icon">🗂️</span>
+            <span id="catBtnText">تصفية بالفئة</span>
+          </button>
+          <div class="design-cta-wrap">
+            <span class="design-cta-new">جديد ✨</span>
+            <a class="design-cta-btn" href="/custom-design.html">
+              <span class="design-cta-icon">✏️</span>
+              <div class="design-cta-text">
+                <span class="design-cta-label">ارسل تصميمك</span>
+                <span class="design-cta-sub">حوّل فكرتك لقطعة حقيقية</span>
+              </div>
+              <svg class="design-cta-arrow" width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden="true">
+                <path d="M15 10H5M5 10L9 6M5 10L9 14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </a>
+          </div>
+        </div>
+        <div id="activeCatBar" class="active-cat-bar" style="display:none">
+          <span id="activeCatLabel"></span>
+          <button class="active-cat-clear" id="clearCatBtn" type="button">✕ إلغاء التصفية</button>
         </div>
       </section>
 
@@ -189,7 +209,23 @@
       </div>
     </section>
 
+    <!-- Category Overlay (full-page) -->
+    <div class="cat-overlay" id="catOverlay">
+      <div class="cat-overlay-header">
+        <div>
+          <div class="cat-overlay-title">اختر الفئة</div>
+          <div class="cat-overlay-sub">اضغط على الفئة لتصفية المنتجات</div>
+        </div>
+        <button class="xbtn" id="catOverlayClose" type="button">✕</button>
+      </div>
+      <div class="cat-overlay-scroll">
+        <div class="cat-overlay-inner">
+          <div class="cat-overlay-grid" id="catGrid"></div>
+        </div>
+      </div>
+    </div>
+
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
-    <script type="module" src="/assets/index.js?v=20260505-3"></script>
+    <script type="module" src="/assets/index.js?v=20260505-4"></script>
   </body>
 </html>

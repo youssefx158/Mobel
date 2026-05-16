@@ -1,4 +1,4 @@
-import { api, bytesToDataUrl, fmtEGP, qs, qsa, show } from "./app.js";
+import { api, bytesToDataUrl, fmtEGP, qs, qsa, show } from "./app.js?v=20260505-4";
 
 const root = qs("#root");
 
@@ -9,6 +9,7 @@ let state = {
   feedback: [],
   customDesigns: [],
   discountCodes: [],
+  categories: [],
   customDesignSettings: null,
   stats: null,
   activeNav: "products",
@@ -80,6 +81,7 @@ function renderShell() {
           </div>
         </div>
         <button id="navProducts" class="btn sidebtn ${state.activeNav==='products'?'active':''}" type="button">📦 إدارة المنتجات</button>
+        <button id="navCategories" class="btn sidebtn ${state.activeNav==='categories'?'active':''}" type="button">🗂️ إدارة الفئات</button>
         <button id="navDiscounts" class="btn sidebtn ${state.activeNav==='discounts'?'active':''}" type="button">🏷️ إدارة الخصومات</button>
         <button id="navStats"    class="btn sidebtn ${state.activeNav==='stats'?'active':''}"    type="button">📊 الإحصائيات</button>
         <button id="navFeedback" class="btn sidebtn ${state.activeNav==='feedback'?'active':''}" type="button">
@@ -118,6 +120,9 @@ function renderShell() {
   qs("#navProducts").addEventListener("click", async () => {
     state.activeNav = "products"; await loadProducts(); renderShell(); renderProducts();
   });
+  qs("#navCategories").addEventListener("click", async () => {
+    state.activeNav = "categories"; await loadCategories(); renderShell(); renderCategories();
+  });
   qs("#navDiscounts").addEventListener("click", async () => {
     state.activeNav = "discounts"; await loadDiscountCodes(); renderShell(); renderDiscountCodes();
   });
@@ -138,7 +143,7 @@ function renderShell() {
   });
   qs("#logout").addEventListener("click", async () => {
     try { await api("/api/admin/logout", { method: "POST", body: "{}" }); } finally {
-      state = { view: "login", products: [], orders: [], feedback: [], customDesigns: [], discountCodes: [], customDesignSettings: null, stats: null, activeNav: "products" };
+      state = { view: "login", products: [], orders: [], feedback: [], customDesigns: [], discountCodes: [], categories: [], customDesignSettings: null, stats: null, activeNav: "products" };
       renderLogin();
     }
   });
@@ -153,7 +158,11 @@ function renderShell() {
 //  LOAD DATA
 // ══════════════════════════════════════════
 async function loadAll() {
-  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback(), loadDiscountCodes(), loadCustomDesigns(), loadCustomDesignSettings()]);
+  await Promise.all([loadProducts(), loadOrders(), loadStats(), loadFeedback(), loadDiscountCodes(), loadCustomDesigns(), loadCustomDesignSettings(), loadCategories()]);
+}
+async function loadCategories() {
+  try { const d = await api("/api/admin/categories"); state.categories = d.categories || []; }
+  catch { state.categories = []; }
 }
 async function loadProducts() {
   const d = await api("/api/admin/products"); state.products = d.products || [];
@@ -313,6 +322,187 @@ function detailPreviewMarkup(src, kind = "existing", idx = "") {
       <button type="button" class="admin-image-remove rm-detail-img" aria-label="حذف الصورة">✕</button>
     </div>
   `;
+}
+
+// ══════════════════════════════════════════
+//  CATEGORIES VIEW
+// ══════════════════════════════════════════
+function renderCategories() {
+  const view = qs("#view");
+  view.innerHTML = `
+    <div class="toolbar">
+      <div>
+        <div style="font-weight:900;font-size:18px">🗂️ إدارة الفئات</div>
+        <div class="mini">${state.categories.length} فئة — تُعرض للعميل عند الضغط على "تصفية بالفئة"</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <button id="refreshCats" class="btn" type="button" style="margin:0;width:auto;padding:10px 16px">🔄 تحديث</button>
+        <button id="createCat" class="btn" type="button" style="margin:0;width:auto;padding:10px 20px">＋ فئة جديدة</button>
+      </div>
+    </div>
+    <div id="catsGrid" class="admin-grid"></div>
+  `;
+  qs("#refreshCats").addEventListener("click", async () => { await loadCategories(); renderCategoriesGrid(); });
+  qs("#createCat").addEventListener("click", () => openCategoryEditor(null));
+  renderCategoriesGrid();
+}
+
+function renderCategoriesGrid() {
+  const grid = qs("#catsGrid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  if (!state.categories.length) {
+    grid.innerHTML = `<div class="muted-box" style="grid-column:1/-1;text-align:center;padding:40px">
+      لا توجد فئات بعد. أنشئ فئة جديدة مثل: انمي 🎌، أفلام 🎬، مسلسلات 📺 ...
+    </div>`;
+    return;
+  }
+
+  const productCountByCategory = {};
+  state.products.forEach(p => {
+    if (p.categoryId) {
+      productCountByCategory[p.categoryId] = (productCountByCategory[p.categoryId] || 0) + 1;
+    }
+  });
+
+  state.categories
+    .slice()
+    .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+    .forEach((cat, i) => {
+      const prodCount = productCountByCategory[cat.id] || 0;
+      const el = document.createElement("article");
+      el.className = "admin-product-card";
+      el.style.animationDelay = `${i * 40}ms`;
+      el.innerHTML = `
+        <div class="admin-card-body" style="gap:14px">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+            <div style="display:flex;align-items:center;gap:12px">
+              <div style="font-size:40px;line-height:1">${escapeHtml(cat.emoji || "📁")}</div>
+              <div>
+                <div class="admin-card-name">${escapeHtml(cat.name)}</div>
+                <div class="mini">ترتيب: ${cat.sortOrder || 0} • ${prodCount} منتج</div>
+              </div>
+            </div>
+            <span class="status-badge ${cat.isActive !== false ? "status-published" : "status-hidden"}">${cat.isActive !== false ? "نشطة" : "مخفية"}</span>
+          </div>
+          <div class="admin-card-actions">
+            <button class="btn" data-act="edit" type="button">✏️ تعديل</button>
+            <button class="btn danger" data-act="del" type="button">🗑️ حذف</button>
+          </div>
+        </div>
+      `;
+      el.addEventListener("click", (e) => {
+        const b = e.target.closest("button");
+        if (!b) return;
+        if (b.dataset.act === "edit") openCategoryEditor(cat);
+        if (b.dataset.act === "del") deleteCategory(cat);
+      });
+      grid.appendChild(el);
+    });
+}
+
+function openCategoryEditor(cat) {
+  const backdrop = qs("#backdrop");
+  const modal    = qs("#modal");
+  const title    = qs("#modalTitle");
+  const body     = qs("#modalBody");
+
+  title.textContent = cat ? "تعديل الفئة" : "إنشاء فئة جديدة";
+  const c = cat || {};
+
+  body.innerHTML = `
+    <div style="display:grid;gap:16px">
+      <div style="padding:14px;background:rgba(20,184,166,.06);border:1px solid rgba(20,184,166,.2);border-radius:14px;font-size:13px;color:var(--muted);line-height:1.7">
+        💡 الفئات تظهر للعميل في صفحة المتجر عند الضغط على "تصفية بالفئة". مثال: انمي 🎌 ، أفلام 🎬 ، مسلسلات 📺
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 120px;gap:12px">
+        <div class="field" id="fCatName">
+          <label>اسم الفئة *</label>
+          <input id="catName" value="${escapeAttr(c.name || "")}" placeholder="مثال: انمي" />
+          <div class="err">يرجى إدخال اسم الفئة</div>
+        </div>
+        <div class="field">
+          <label>الإيموجي</label>
+          <input id="catEmoji" value="${escapeAttr(c.emoji || "")}" placeholder="🎌" style="text-align:center;font-size:22px" maxlength="4" />
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="field">
+          <label>الترتيب (الأصغر يظهر أولاً)</label>
+          <input id="catOrder" type="number" min="0" value="${c.sortOrder ?? 0}" />
+        </div>
+        <div style="display:flex;flex-direction:column;justify-content:flex-end;padding-bottom:4px">
+          <label style="display:flex;align-items:center;gap:10px;font-weight:700;cursor:pointer">
+            <input id="catActive" type="checkbox" ${c.isActive !== false ? "checked" : ""} style="width:auto" />
+            الفئة نشطة (تظهر للعملاء)
+          </label>
+        </div>
+      </div>
+      <div class="err" id="catEditorErr" style="display:none;padding:8px 12px;background:rgba(239,68,68,.1);border-radius:10px"></div>
+      <button id="saveCat" class="btn" type="button">${cat ? "💾 حفظ التعديلات" : "✨ إنشاء الفئة"}</button>
+    </div>
+  `;
+
+  qs("#saveCat", body).addEventListener("click", () => saveCategory(cat?.id || null));
+  setTimeout(() => qs("#catName", body)?.focus(), 80);
+  show(backdrop, true);
+  show(modal, true);
+}
+
+async function saveCategory(existingId) {
+  const body   = qs("#modalBody");
+  const errEl  = qs("#catEditorErr", body);
+  const saveBtn= qs("#saveCat", body);
+  errEl.style.display = "none";
+
+  const name      = qs("#catName", body).value.trim();
+  const emoji     = qs("#catEmoji", body).value.trim();
+  const sortOrder = Number(qs("#catOrder", body).value) || 0;
+  const isActive  = qs("#catActive", body).checked;
+
+  if (!name) {
+    qs("#fCatName")?.classList.add("bad");
+    errEl.textContent = "يرجى إدخال اسم الفئة";
+    errEl.style.display = "block";
+    return;
+  }
+
+  saveBtn.disabled = true;
+  saveBtn.textContent = "جاري الحفظ...";
+
+  try {
+    const payload = { name, emoji: emoji || "📁", sortOrder, isActive };
+    if (existingId) {
+      await api(`/api/admin/categories/${existingId}`, { method: "PUT", body: JSON.stringify(payload) });
+      showToast("✅ تم تحديث الفئة");
+    } else {
+      await api("/api/admin/categories", { method: "POST", body: JSON.stringify(payload) });
+      showToast("✨ تم إنشاء الفئة");
+    }
+    await loadCategories();
+    show(qs("#backdrop"), false);
+    show(qs("#modal"), false);
+    renderCategories();
+  } catch (e) {
+    errEl.textContent = e.message || "حصل خطأ أثناء الحفظ";
+    errEl.style.display = "block";
+  } finally {
+    saveBtn.disabled = false;
+    saveBtn.textContent = existingId ? "💾 حفظ التعديلات" : "✨ إنشاء الفئة";
+  }
+}
+
+async function deleteCategory(cat) {
+  if (!confirm(`هل تريد حذف فئة "${cat.name}"؟\nسيتم إزالة ربطها بالمنتجات تلقائياً عند تعديلهم.`)) return;
+  try {
+    await api(`/api/admin/categories/${cat.id}`, { method: "DELETE" });
+    await loadCategories();
+    renderCategories();
+    showToast("🗑️ تم حذف الفئة");
+  } catch (e) {
+    alert(e.message || "تعذر حذف الفئة");
+  }
 }
 
 // ══════════════════════════════════════════
@@ -1654,6 +1844,15 @@ function openProductEditor(product) {
           </select>
         </div>
       </div>
+      <div class="field">
+        <label>الفئة (اختياري)</label>
+        <select id="pCat">
+          <option value="">— بدون فئة —</option>
+          ${state.categories.map(c =>
+            `<option value="${escapeAttr(c.id)}" ${p.categoryId === c.id ? "selected" : ""}>${escapeHtml(c.emoji || "📁")} ${escapeHtml(c.name)}</option>`
+          ).join("")}
+        </select>
+      </div>
 
       <div class="field">
         <label>صورة البطاقة الرئيسية</label>
@@ -1834,7 +2033,8 @@ async function saveProduct(existingId) {
   );
   const detailImages = [...keptExisting, ...newImages];
 
-  const payload = { name, description: desc, basePrice, salePrice, visibility, sizes };
+  const categoryId = qs("#pCat", body)?.value || null;
+  const payload = { name, description: desc, basePrice, salePrice, visibility, sizes, categoryId: categoryId || null };
   if (cardImage !== undefined) payload.cardImage = cardImage;
   payload.detailImages = detailImages;
 

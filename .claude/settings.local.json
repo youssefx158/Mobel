@@ -1,9 +1,19 @@
 {
   "permissions": {
-    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
-    ]
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(node --check server.mjs)",
+      "WebFetch(domain:wispbyte.com)",
+      "Bash(node --check config.mjs)",
+      "Bash(node --check public/assets/index.js)",
+      "Bash(node --check public/assets/admin.js)",
+      "Bash(node --check public/assets/checkout.js)",
+      "Bash(node --check public/assets/custom-design.js)",
+      "Bash(npm run *)",
+      "WebSearch"
+    ],
+    "defaultMode": "bypassPermissions"
   }
 }

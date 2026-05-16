@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-
+.claude
 # Data files (local only - don't push to GitHub)
 data/
 *.tmp

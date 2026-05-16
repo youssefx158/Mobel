@@ -1,4 +1,4 @@
-import { api, getTsToken, qs, renderTurnstile, waitForTurnstile } from "./app.js";
+import { api, getTsToken, qs, renderTurnstile, waitForTurnstile } from "./app.js?v=20260505-4";
 
 // ── State ──────────────────────────────────────────────────────────────────
 const state = {
