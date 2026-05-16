@@ -23,6 +23,7 @@
   const DISCOUNT_CODES_FILE = path.join(DATA_DIR, "discount-codes.json");
   const CUSTOM_DESIGNS_FILE = path.join(DATA_DIR, "custom-designs.json");
   const CUSTOM_DESIGN_SETTINGS_FILE = path.join(DATA_DIR, "custom-design-settings.json");
+  const CATEGORIES_FILE = path.join(DATA_DIR, "categories.json");
   const MAX_IMAGE_BYTES = 2_000_000;
   const ALLOWED_IMAGE_TYPES = new Map([
     ["image/jpeg", "jpg"],
@@ -258,8 +259,21 @@
     // Products (public)
     if (url.pathname === "/api/products" && method === "GET") {
       const products = await readProducts();
-      const published = products.filter((p) => p.visibility === "published");
+      const categoryId = url.searchParams.get("categoryId") || null;
+      let published = products.filter((p) => p.visibility === "published");
+      if (categoryId) {
+        published = published.filter((p) => p.categoryId === categoryId);
+      }
       return sendJson(res, 200, { ok: true, products: published });
+    }
+
+    // Categories (public)
+    if (url.pathname === "/api/categories" && method === "GET") {
+      const categories = await readCategories();
+      const active = categories
+        .filter((c) => c.isActive !== false)
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+      return sendJson(res, 200, { ok: true, categories: active });
     }
 
     if (url.pathname === "/api/discount-codes/preview" && method === "POST") {
@@ -595,6 +609,62 @@
       return sendJson(res, 200, { ok: true });
     }
 
+    // Admin categories
+    if (url.pathname === "/api/admin/categories" && method === "GET") {
+      const categories = await readCategories();
+      return sendJson(res, 200, { ok: true, categories });
+    }
+    if (url.pathname === "/api/admin/categories" && method === "POST") {
+      const body = await readJsonBody(req, 16_000);
+      const name = String(body?.name || "").trim();
+      const emoji = String(body?.emoji || "").trim().slice(0, 10);
+      if (!name || name.length > 50) {
+        return sendJson(res, 400, { ok: false, message: "اسم الفئة مطلوب ويجب ألا يتجاوز 50 حرفاً" });
+      }
+      const now = new Date().toISOString();
+      const entry = {
+        id: `CAT-${crypto.randomBytes(6).toString("base64url")}`,
+        name,
+        emoji: emoji || "📁",
+        sortOrder: Math.floor(Number(body?.sortOrder) || 0),
+        isActive: body?.isActive !== false,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const categories = await readCategories();
+      categories.push(entry);
+      await writeJson(CATEGORIES_FILE, categories);
+      return sendJson(res, 201, { ok: true, category: entry });
+    }
+    const catAdminMatch = url.pathname.match(/^\/api\/admin\/categories\/(CAT-[A-Za-z0-9\-_]+)$/);
+    if (catAdminMatch && method === "PUT") {
+      const id = catAdminMatch[1];
+      const body = await readJsonBody(req, 16_000);
+      const categories = await readCategories();
+      const idx = categories.findIndex((c) => c.id === id);
+      if (idx < 0) return sendJson(res, 404, { ok: false, message: "الفئة غير موجودة" });
+      const name = String(body?.name || "").trim();
+      if (!name) return sendJson(res, 400, { ok: false, message: "اسم الفئة مطلوب" });
+      categories[idx] = {
+        ...categories[idx],
+        name,
+        emoji: String(body?.emoji || "").trim().slice(0, 10) || categories[idx].emoji,
+        sortOrder: body?.sortOrder != null ? Math.floor(Number(body.sortOrder)) : categories[idx].sortOrder,
+        isActive: body?.isActive != null ? Boolean(body.isActive) : categories[idx].isActive,
+        updatedAt: new Date().toISOString(),
+      };
+      await writeJson(CATEGORIES_FILE, categories);
+      return sendJson(res, 200, { ok: true, category: categories[idx] });
+    }
+    if (catAdminMatch && method === "DELETE") {
+      const id = catAdminMatch[1];
+      const categories = await readCategories();
+      const next = categories.filter((c) => c.id !== id);
+      if (next.length === categories.length) return sendJson(res, 404, { ok: false, message: "الفئة غير موجودة" });
+      await writeJson(CATEGORIES_FILE, next);
+      return sendJson(res, 200, { ok: true });
+    }
+
     // Admin orders
     if (url.pathname === "/api/admin/orders" && method === "GET") {
       const orders = await readOrders();
@@ -848,6 +918,10 @@
     return readJson(CUSTOM_DESIGN_SETTINGS_FILE, {
       tshirts: [{ image: null, zone: null }, { image: null, zone: null }],
     });
+  }
+
+  async function readCategories() {
+    return readJson(CATEGORIES_FILE, []);
   }
 
   async function createOrder(cart, customer) {
@@ -1270,6 +1344,10 @@
         }))
       : (existing?.sizes ?? []);
 
+    const categoryId = Object.prototype.hasOwnProperty.call(body ?? {}, "categoryId")
+      ? (String(body.categoryId || "").trim() || null)
+      : (existing?.categoryId ?? null);
+
     return {
       id,
       name,
@@ -1280,6 +1358,7 @@
       cardImage,
       detailImages,
       sizes,
+      categoryId,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -1590,6 +1669,7 @@
     await ensureJsonFile(CUSTOM_DESIGN_SETTINGS_FILE, {
       tshirts: [{ image: null, zone: null }, { image: null, zone: null }],
     });
+    await ensureJsonFile(CATEGORIES_FILE, []);
   }
 
   async function ensureJsonFile(file, fallback) {

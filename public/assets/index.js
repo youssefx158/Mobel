@@ -39,7 +39,18 @@ const helpModal    = qs("#helpModal");
 const helpClose    = qs("#helpClose");
 
 let products = [];
+let categories = [];
+let activeCategory = null;
 let activeProduct = null;
+
+const catBtn         = qs("#catBtn");
+const catBtnText     = qs("#catBtnText");
+const catOverlay     = qs("#catOverlay");
+const catOverlayClose= qs("#catOverlayClose");
+const catGrid        = qs("#catGrid");
+const activeCatBar   = qs("#activeCatBar");
+const activeCatLabel = qs("#activeCatLabel");
+const clearCatBtn    = qs("#clearCatBtn");
 
 boot();
 
@@ -49,10 +60,15 @@ async function boot() {
   bindProductModal();
   bindTracking();
   bindHelp();
+  bindCategoryOverlay();
 
   try {
-    const data = await api("/api/products");
-    products = data.products || [];
+    const [prodData, catData] = await Promise.all([
+      api("/api/products"),
+      api("/api/categories").catch(() => ({ categories: [] })),
+    ]);
+    products   = prodData.products   || [];
+    categories = catData.categories  || [];
   } catch {
     products = [];
   }
@@ -62,8 +78,11 @@ async function boot() {
 // ── Grid ──
 function renderGrid() {
   gridEl.innerHTML = "";
-  show(emptyEl, products.length === 0);
-  products.forEach((p, i) => {
+  const list = activeCategory
+    ? products.filter((p) => p.categoryId === activeCategory)
+    : products;
+  show(emptyEl, list.length === 0);
+  list.forEach((p, i) => {
     const priceInfo = computePriceInfo(p);
     const previewImage = p.cardImage || p.detailImages?.[0] || "";
     const el = document.createElement("article");
@@ -85,9 +104,116 @@ function renderGrid() {
         <button class="btn" type="button">تسوق الآن</button>
       </div>
     `;
-    el.addEventListener("click", () => openProduct(p.id));
+    el.addEventListener("click", () => openProduct(p.id, el));
     gridEl.appendChild(el);
   });
+}
+
+// ── Category Overlay ──
+function bindCategoryOverlay() {
+  catBtn.addEventListener("click", openCatOverlay);
+  catOverlayClose.addEventListener("click", closeCatOverlay);
+  clearCatBtn?.addEventListener("click", () => {
+    activeCategory = null;
+    updateCatUI();
+    renderGrid();
+  });
+}
+
+function openCatOverlay() {
+  // حساب مركز الزر بالنسبة للـ viewport
+  const rect = catBtn.getBoundingClientRect();
+  const ox = ((rect.left + rect.width  / 2) / window.innerWidth  * 100).toFixed(2) + "%";
+  const oy = ((rect.top  + rect.height / 2) / window.innerHeight * 100).toFixed(2) + "%";
+  catOverlay.style.setProperty("--ox", ox);
+  catOverlay.style.setProperty("--oy", oy);
+
+  // ripple من داخل الزر
+  spawnBtnRipple(rect);
+
+  // render الكروت الأول (كلها paused)
+  renderCatGrid();
+
+  // فتح الـ clip-path
+  catOverlay.classList.remove("closing");
+  catOverlay.classList.add("open");
+  document.body.style.overflow = "hidden";
+
+  // شغّل الـ stagger بعد ما الـ overlay بدأ يتفتح
+  setTimeout(() => {
+    const items = catOverlay.querySelectorAll(".cat-item");
+    items.forEach((el, i) => {
+      el.style.animationDelay = `${120 + i * 45}ms`;
+      el.style.animationPlayState = "running";
+    });
+  }, 40);
+}
+
+function closeCatOverlay() {
+  catOverlay.classList.add("closing");
+  catOverlay.classList.remove("open");
+  document.body.style.overflow = "";
+
+  setTimeout(() => {
+    catOverlay.classList.remove("closing");
+  }, 460);
+}
+
+function spawnBtnRipple(rect) {
+  const ripple = document.createElement("span");
+  ripple.className = "cat-btn-ripple";
+  // ضع الـ ripple في مركز الزر
+  ripple.style.top  = (rect.height / 2) + "px";
+  ripple.style.right = (rect.width  / 2) + "px";
+  catBtn.appendChild(ripple);
+  ripple.addEventListener("animationend", () => ripple.remove(), { once: true });
+}
+
+function renderCatGrid() {
+  catGrid.innerHTML = "";
+
+  const makeItem = (emoji, label, isActive, onClick) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `cat-item ${isActive ? "active" : ""}`;
+    btn.style.animationPlayState = "paused";
+    btn.innerHTML = `
+      ${isActive ? `<span class="cat-item-check">✓</span>` : ""}
+      <span class="cat-item-emoji">${emoji}</span>
+      <span class="cat-item-name">${label}</span>
+    `;
+    btn.addEventListener("click", onClick);
+    return btn;
+  };
+
+  catGrid.appendChild(makeItem("🛍️", "الكل", !activeCategory, () => {
+    activeCategory = null; updateCatUI(); renderGrid(); closeCatOverlay();
+  }));
+
+  categories.forEach((cat) => {
+    catGrid.appendChild(makeItem(
+      escapeHtml(cat.emoji || "📁"),
+      escapeHtml(cat.name),
+      activeCategory === cat.id,
+      () => { activeCategory = cat.id; updateCatUI(); renderGrid(); closeCatOverlay(); }
+    ));
+  });
+}
+
+function updateCatUI() {
+  if (!activeCategory) {
+    catBtnText.textContent = "تصفية بالفئة";
+    catBtn.classList.remove("active");
+    if (activeCatBar) activeCatBar.style.display = "none";
+  } else {
+    const cat = categories.find((c) => c.id === activeCategory);
+    catBtnText.textContent = `${cat?.emoji || "📁"} ${cat?.name || "فئة"}`;
+    catBtn.classList.add("active");
+    if (activeCatBar) {
+      activeCatBar.style.display = "flex";
+      if (activeCatLabel) activeCatLabel.textContent = `عرض: ${cat?.name || ""}`;
+    }
+  }
 }
 
 function computePriceInfo(product) {
@@ -103,7 +229,7 @@ function computePriceInfo(product) {
 }
 
 // ── Product Modal ──
-function openProduct(productId) {
+function openProduct(productId, triggerEl) {
   const p = products.find((x) => x.id === productId);
   if (!p) return;
   activeProduct = p;
@@ -172,8 +298,22 @@ function openProduct(productId) {
     </div>
   `;
 
+  // card-origin animation
+  if (triggerEl) {
+    const rect = triggerEl.getBoundingClientRect();
+    const dx = Math.round((rect.left + rect.width / 2) - window.innerWidth / 2);
+    const dy = Math.round((rect.top + rect.height / 2) - window.innerHeight / 2);
+    modal.style.setProperty('--modal-dx', `${dx}px`);
+    modal.style.setProperty('--modal-dy', `${dy}px`);
+  } else {
+    modal.style.setProperty('--modal-dx', '0px');
+    modal.style.setProperty('--modal-dy', '0px');
+  }
+
   wireGallery();
   wireProductControls();
+  modal.classList.remove('closing');
+  void modal.offsetWidth;
   show(backdrop, true);
   show(modal, true);
 }
@@ -243,8 +383,14 @@ function wireProductControls() {
 }
 
 function closeProductModal() {
-  show(backdrop, false);
-  show(modal, false);
+  if (!modal.classList.contains('show')) return;
+  modal.classList.add('closing');
+  const cleanup = () => {
+    modal.classList.remove('show', 'closing');
+    show(backdrop, false);
+  };
+  const t = setTimeout(cleanup, 300);
+  modal.addEventListener('animationend', () => { clearTimeout(t); cleanup(); }, { once: true });
 }
 
 // ── Cart ──
